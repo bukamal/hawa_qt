@@ -13,10 +13,11 @@ from config import get_company_info, save_company_info
 import os
 import shutil
 import datetime
+import requests
 
 class SettingsWidget(QWidget):
     rates_changed = pyqtSignal()
-    backup_settings_changed = pyqtSignal()  # إشارة لتحديث النسخ الاحتياطي الدوري
+    backup_settings_changed = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -198,6 +199,11 @@ class SettingsWidget(QWidget):
         self.server_url_edit.setPlaceholderText("http://192.168.1.100:8000")
         form.addRow("عنوان الخادم البعيد:", self.server_url_edit)
 
+        # زر اختبار الاتصال
+        self.test_btn = QPushButton("🔍 اختبار الاتصال")
+        self.test_btn.clicked.connect(self.test_connection)
+        form.addRow(self.test_btn)
+
         save_btn = QPushButton("حفظ الإعدادات")
         save_btn.clicked.connect(self.save_network_settings)
         form.addRow(save_btn)
@@ -216,6 +222,26 @@ class SettingsWidget(QWidget):
     def on_server_toggled(self, checked):
         self.server_url_edit.setEnabled(not checked)
 
+    def test_connection(self):
+        """اختبار الاتصال بالخادم البعيد"""
+        url = self.server_url_edit.text().strip()
+        if not url:
+            QMessageBox.warning(self, "تنبيه", "يرجى إدخال عنوان الخادم")
+            return
+        # إضافة http:// إذا لم تكن موجودة
+        if not url.startswith("http://") and not url.startswith("https://"):
+            url = "http://" + url
+        try:
+            resp = requests.get(f"{url}/health", timeout=3)
+            if resp.status_code == 200 and resp.json().get("status") == "alive":
+                QMessageBox.information(self, "✅ نجاح", f"تم الاتصال بالخادم بنجاح\nالعنوان: {url}")
+            else:
+                QMessageBox.warning(self, "❌ فشل", f"الخادم لا يستجيب بشكل صحيح\nالعنوان: {url}\nالاستجابة: {resp.text[:100]}")
+        except requests.exceptions.ConnectionError:
+            QMessageBox.critical(self, "خطأ في الاتصال", f"لا يمكن الوصول إلى الخادم:\n{url}\n\nتأكد من:\n- أن الخادم قيد التشغيل\n- أن الجهازين على نفس الشبكة\n- أن جدار الحماية يسمح بالاتصال")
+        except Exception as e:
+            QMessageBox.critical(self, "خطأ", f"حدث خطأ: {str(e)}")
+
     def save_network_settings(self):
         settings = QSettings("Hawaa", "Accounting")
         settings.setValue("network/is_server", self.is_server_check.isChecked())
@@ -228,7 +254,6 @@ class SettingsWidget(QWidget):
         tab.setLayoutDirection(Qt.RightToLeft)
         layout = QVBoxLayout(tab)
 
-        # النسخ الاحتياطي الدوري
         periodic_group = QGroupBox("النسخ الاحتياطي الدوري")
         periodic_layout = QFormLayout()
         periodic_layout.setLabelAlignment(Qt.AlignRight)
@@ -256,7 +281,6 @@ class SettingsWidget(QWidget):
         periodic_group.setLayout(periodic_layout)
         layout.addWidget(periodic_group)
 
-        # نسخة فورية
         instant_group = QGroupBox("نسخ احتياطي فوري")
         instant_layout = QHBoxLayout()
         backup_now_btn = QPushButton("📀 إنشاء نسخة احتياطية الآن")
@@ -265,7 +289,6 @@ class SettingsWidget(QWidget):
         instant_group.setLayout(instant_layout)
         layout.addWidget(instant_group)
 
-        # إدارة قاعدة البيانات
         manage_group = QGroupBox("إدارة قاعدة البيانات")
         manage_layout = QVBoxLayout()
         btn_layout = QHBoxLayout()
@@ -284,7 +307,6 @@ class SettingsWidget(QWidget):
         manage_group.setLayout(manage_layout)
         layout.addWidget(manage_group)
 
-        # الترخيص
         license_group = QGroupBox("الترخيص")
         license_layout = QVBoxLayout()
         self.license_status_label = QLabel("جاري التحقق...")
@@ -318,7 +340,6 @@ class SettingsWidget(QWidget):
         settings.setValue("backup/interval_hours", self.backup_interval.value())
         settings.setValue("backup/folder", self.backup_folder.text())
         QMessageBox.information(self, "نجاح", "تم حفظ إعدادات النسخ الاحتياطي")
-        # إصدار إشارة لتحديث النسخ الاحتياطي الدوري دون إعادة تشغيل
         self.backup_settings_changed.emit()
 
     def load_backup_settings(self):
@@ -346,10 +367,7 @@ class SettingsWidget(QWidget):
 
     def export_database(self):
         if self._is_remote_client():
-            QMessageBox.warning(self, "تنبيه",
-                "أنت متصل بخادم بعيد (وضع عميل).\n"
-                "عملية التصدير تؤثر على قاعدة البيانات المحلية فقط، وليس على الخادم.\n"
-                "لتصدير قاعدة بيانات الخادم، يُرجى تنفيذ هذه العملية مباشرة على جهاز الخادم.")
+            QMessageBox.warning(self, "تنبيه", "أنت متصل بخادم بعيد (وضع عميل).\nعملية التصدير تؤثر فقط على قاعدة البيانات المحلية (إن وجدت).\nلتصدير قاعدة بيانات الخادم، يُرجى تنفيذ هذه العملية على جهاز الخادم.")
         from database.connection import DB_PATH
         filename, _ = QFileDialog.getSaveFileName(self, "تصدير قاعدة البيانات", "hawaa_data_backup.db", "SQLite (*.db)")
         if filename:
@@ -364,10 +382,7 @@ class SettingsWidget(QWidget):
 
     def import_database(self):
         if self._is_remote_client():
-            QMessageBox.warning(self, "تنبيه",
-                "أنت متصل بخادم بعيد (وضع عميل).\n"
-                "عملية الاستيراد ستؤثر فقط على قاعدة البيانات المحلية (إن وجدت)، وليس على الخادم.\n"
-                "لتغيير قاعدة بيانات الخادم، يُرجى تنفيذ هذه العملية على جهاز الخادم.")
+            QMessageBox.warning(self, "تنبيه", "أنت متصل بخادم بعيد (وضع عميل).\nعملية الاستيراد ستؤثر فقط على قاعدة البيانات المحلية (إن وجدت).\nلتغيير قاعدة بيانات الخادم، يُرجى تنفيذ هذه العملية على جهاز الخادم.")
         from database.connection import DB_PATH
         filename, _ = QFileDialog.getOpenFileName(self, "استيراد قاعدة البيانات", "", "SQLite (*.db)")
         if filename:
@@ -382,14 +397,11 @@ class SettingsWidget(QWidget):
 
     def reset_database(self):
         if self._is_remote_client():
-            QMessageBox.warning(self, "عملية غير مسموحة",
-                "لا يمكن إعادة تهيئة قاعدة البيانات من جهاز عميل.\n"
-                "يُرجى تنفيذ هذه العملية مباشرة على جهاز الخادم.")
+            QMessageBox.warning(self, "عملية غير مسموحة", "لا يمكن إعادة تهيئة قاعدة البيانات من جهاز عميل.\nيُرجى تنفيذ هذه العملية مباشرة على جهاز الخادم.")
             return
         from database.connection import DB_PATH
-        reply = QMessageBox.question(self, "تأكيد خطير",
-            "سيتم حذف كل البيانات وإعادة تهيئة قاعدة البيانات المحلية.\nلا يمكن التراجع. متابعة؟",
-            QMessageBox.Yes | QMessageBox.No)
+        reply = QMessageBox.question(self, "تأكيد خطير", "سيتم حذف كل البيانات وإعادة تهيئة قاعدة البيانات المحلية.\nلا يمكن التراجع. متابعة؟",
+                                     QMessageBox.Yes | QMessageBox.No)
         if reply == QMessageBox.Yes:
             try:
                 if os.path.exists(DB_PATH):

@@ -27,7 +27,6 @@ def on_license_invalid():
     QTimer.singleShot(0, show)
 
 def run_server():
-    """تشغيل الخادم المدمج (HTTPServer) في خيط منفصل"""
     from server import create_server
     server = create_server()
     server.serve_forever()
@@ -66,6 +65,14 @@ def start_periodic_backup():
     timer.start(interval_hours * 3600 * 1000)
     return timer
 
+def test_server_connection(url):
+    import requests
+    try:
+        resp = requests.get(f"{url}/health", timeout=3)
+        return resp.status_code == 200 and resp.json().get("status") == "alive"
+    except:
+        return False
+
 def main():
     app = QApplication(sys.argv)
     app.setFont(QFont("Tajawal", 10))
@@ -76,13 +83,37 @@ def main():
     server_url = settings.value("network/server_url", "http://localhost:8000")
 
     if is_server:
-        # تشغيل الخادم في خلفية التطبيق
         server_thread = threading.Thread(target=run_server, daemon=True)
         server_thread.start()
-        time.sleep(1)  # انتظار بدء الخادم
+        time.sleep(1)
         os.environ['HAWAA_SERVER'] = 'http://localhost:8000'
     else:
-        os.environ['HAWAA_SERVER'] = server_url
+        use_local = False
+        if server_url and server_url != "http://localhost:8000":
+            if not test_server_connection(server_url):
+                reply = QMessageBox.question(None, "تحذير الاتصال بالخادم",
+                    f"لا يمكن الاتصال بالخادم المحدد:\n{server_url}\n\n"
+                    "قد تكون الأسباب:\n"
+                    "- الخادم ليس قيد التشغيل\n"
+                    "- الجهازان ليسا على نفس الشبكة\n"
+                    "- جدار الحماية يمنع الاتصال\n\n"
+                    "هل تريد المتابعة باستخدام قاعدة البيانات المحلية؟\n"
+                    "(اختر 'لا' لفتح إعدادات الشبكة وتعديل العنوان)",
+                    QMessageBox.Yes | QMessageBox.No,
+                    QMessageBox.No)
+                if reply == QMessageBox.No:
+                    from views.widgets.settings_widget import SettingsWidget
+                    dlg = SettingsWidget()
+                    dlg.exec()
+                    sys.exit(0)
+                else:
+                    use_local = True
+                    QMessageBox.information(None, "تنبيه",
+                        "سيتم استخدام قاعدة البيانات المحلية. لن تتم مشاركة البيانات مع الأجهزة الأخرى.")
+        if use_local:
+            os.environ['HAWAA_SERVER'] = ''
+        else:
+            os.environ['HAWAA_SERVER'] = server_url
 
     ThemeManager.init_app(app)
 
