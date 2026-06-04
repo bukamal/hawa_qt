@@ -1,7 +1,5 @@
-from PyQt5.QtWidgets import QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QMessageBox, QHeaderView, QFileDialog
+from PyQt5.QtWidgets import QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QMessageBox, QHeaderView
 from PyQt5.QtCore import Qt
-from PyQt5.QtPrintSupport import QPrinter, QPrintPreviewDialog
-from PyQt5.QtGui import QTextDocument, QFont
 from database import ExpenseRepository
 from auth.session import UserSession
 from i18n.translator import translate
@@ -22,7 +20,7 @@ class CompanyDetailsDialog(CenteredDialog):
         super().__init__(parent)
         self.company_name = company_name
         self.setWindowTitle(f"تفاصيل حسابات {company_name}")
-        self.resize(900, 550)
+        self.resize(1000, 600)
         layout = QVBoxLayout(self.content_widget)
         layout.setSpacing(16)
         layout.setContentsMargins(20,20,20,20)
@@ -41,7 +39,7 @@ class CompanyDetailsDialog(CenteredDialog):
         edit_btn.clicked.connect(self.edit_record)
         delete_btn = QPushButton("🗑 "+translate('delete'))
         delete_btn.clicked.connect(self.delete_record)
-        print_btn = QPushButton("🖨️ طباعة / PDF")
+        print_btn = QPushButton("🖨️ طباعة / معاينة")
         print_btn.clicked.connect(self.print_company_report)
         btn_layout.addWidget(add_btn)
         btn_layout.addWidget(edit_btn)
@@ -54,54 +52,60 @@ class CompanyDetailsDialog(CenteredDialog):
     def refresh(self):
         repo = ExpenseRepository()
         records = repo.get_by_company(self.company_name, convert_to_display=False)
-        self.records = list(reversed(records))
-        display_curr = currency.get_display_currency()
-        total_in_display = 0.0
-        total_out_display = 0.0
-        for r in self.records:
-            amt_display = currency.convert(r['amount'], 'USD', display_curr)
-            if r['type'] == 'incoming':
-                total_in_display += amt_display
-            else:
-                total_out_display += amt_display
-        net_display = total_in_display - total_out_display
+        self.records = sorted(records, key=lambda x: x['date'])
+        display_currency = currency.get_display_currency()
+
+        total_in_usd = sum(r['amount'] for r in self.records if r['type'] == 'incoming')
+        total_out_usd = sum(r['amount'] for r in self.records if r['type'] == 'outgoing')
+        net_usd = total_in_usd - total_out_usd
+        
+        total_in_display = currency.convert(total_in_usd, 'USD', display_currency)
+        total_out_display = currency.convert(total_out_usd, 'USD', display_currency)
+        net_display = currency.convert(net_usd, 'USD', display_currency)
+        
         self.summary_label.setText(
-            f"📥 {translate('total_incoming')}: {currency.format_amount(total_in_display)}   |   "
-            f"📤 {translate('total_outgoing')}: {currency.format_amount(total_out_display)}   |   "
-            f"💰 {translate('net')}: {currency.format_amount(net_display)}"
+            f"📥 إجمالي وارد: {currency.format_amount(total_in_display, display_currency)}   |   "
+            f"📤 إجمالي صادر: {currency.format_amount(total_out_display, display_currency)}   |   "
+            f"💰 صافي: {currency.format_amount(net_display, display_currency)}"
         )
 
         data = []
-        running_balance = 0.0
-        for r in self.records:
-            original_amount = currency.convert(r['amount'], 'USD', r['currency'])
-            amount_display = currency.format_amount(original_amount, r['currency'])
-            if r['currency'] == 'USD' and not amount_display.startswith('$'):
-                amount_display = f"$ {amount_display}"
-            type_val = r['type']
-            amt_display_val = currency.convert(r['amount'], 'USD', display_curr)
-            if type_val == 'incoming':
-                running_balance += amt_display_val
-                incoming_display = amount_display
-                outgoing_display = "—"
+        running_usd = 0.0
+        for idx, r in enumerate(self.records, start=1):
+            amount_original = r['amount_original']
+            currency_original = r['currency_original']
+            amount_str = f"{amount_original:,.2f} {currency_original}"
+            
+            if r['type'] == 'incoming':
+                incoming_str = amount_str
+                outgoing_str = "—"
+                running_usd += r['amount']
             else:
-                running_balance -= amt_display_val
-                incoming_display = "—"
-                outgoing_display = amount_display
-            running_balance_display = currency.format_amount(running_balance, display_curr)
+                incoming_str = "—"
+                outgoing_str = amount_str
+                running_usd -= r['amount']
+            
+            running_display = currency.convert(running_usd, 'USD', display_currency)
+            running_str = currency.format_amount(running_display, display_currency)
+            
             data.append({
                 'id': r['id'],
+                'serial': idx,
                 'date': r['date'],
                 'notes': r['notes'] or '',
-                'incoming': incoming_display,
-                'outgoing': outgoing_display,
-                'running': running_balance_display
+                'incoming': incoming_str,
+                'outgoing': outgoing_str,
+                'running': running_str
             })
-        headers = ['date', 'notes', 'incoming', 'outgoing', 'running']
-        display_headers = [translate('date'), translate('notes'), translate('incoming'), translate('outgoing'), translate('cumulative')]
-        self.model = GenericTableModel(data, display_headers, key_fields=['id'], data_keys=headers)
+        
+        headers = ['serial', 'date', 'notes', 'incoming', 'outgoing', 'running']
+        display_headers = ['#', translate('date'), translate('notes'), 'لنا', 'له', translate('cumulative')]
+        data_keys = ['serial', 'date', 'notes', 'incoming', 'outgoing', 'running']
+        
+        self.model = GenericTableModel(data, display_headers, key_fields=['id'], data_keys=data_keys)
         self.table.setModel(self.model)
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.table.setColumnHidden(0, True)
         self.table.refresh_style()
 
     def add_record(self):
@@ -124,7 +128,6 @@ class CompanyDetailsDialog(CenteredDialog):
         records = repo.get_by_company(self.company_name, convert_to_display=False)
         exp = next((r for r in records if r['id'] == exp_id), None)
         if exp:
-            exp['original_amount'] = currency.convert(exp['amount'], 'USD', exp['currency'])
             dialog = AddEditExpenseDialog(self, expense=exp)
             if dialog.exec():
                 self.refresh()
@@ -157,7 +160,6 @@ class CompanyDetailsDialog(CenteredDialog):
         bad = ['\u200e', '\u200f', '\ufeff', '\u202a', '\u202b', '\u202c', '\u202d', '\u202e', '浏', '�']
         for ch in bad:
             text = text.replace(ch, '')
-        # Allow currency symbols and Arabic/English letters
         text = re.sub(r'[^\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFFa-zA-Z0-9\s\-\.\,\:\;\(\)\/\+%\$]', '', text)
         text = re.sub(r'\s+', ' ', text)
         return text.strip()
@@ -167,48 +169,42 @@ class CompanyDetailsDialog(CenteredDialog):
         now = datetime.now()
         date_str = now.strftime("%Y-%m-%d")
         time_str = now.strftime("%H:%M:%S")
-        display_curr = currency.get_display_currency()
-        total_in = 0.0
-        total_out = 0.0
-        for r in self.records:
-            amt = currency.convert(r['amount'], 'USD', display_curr)
-            if r['type'] == 'incoming':
-                total_in += amt
-            else:
-                total_out += amt
-        net = total_in - total_out
-
-        # Build table rows with order: التاريخ, الملاحظات, لنا, له, التراكمي
+        display_currency = currency.get_display_currency()
+        
+        running_usd = 0.0
         table_rows = ""
-        running = 0.0
-        for r in self.records:
-            original_amount = currency.convert(r['amount'], 'USD', r['currency'])
-            amount_str = currency.format_amount(original_amount, r['currency'])
-            if r['currency'] == 'USD' and not amount_str.startswith('$'):
-                amount_str = f"$ {amount_str}"
-            amt_display_val = currency.convert(r['amount'], 'USD', display_curr)
-            if r['type'] == 'incoming':
-                running += amt_display_val
-                incoming = amount_str
-                outgoing = "—"
-            else:
-                running -= amt_display_val
-                incoming = "—"
-                outgoing = amount_str
-            running_display = currency.format_amount(running, display_curr)
+        for idx, r in enumerate(self.records, start=1):
+            amount_original = r['amount_original']
+            currency_original = r['currency_original']
+            amount_str = f"{amount_original:,.2f} {currency_original}"
             notes = self.clean_text(r['notes'] or '—')
             date_display = r['date']
+            
+            if r['type'] == 'incoming':
+                incoming_str = amount_str
+                outgoing_str = "—"
+                running_usd += r['amount']
+            else:
+                incoming_str = "—"
+                outgoing_str = amount_str
+                running_usd -= r['amount']
+            
+            running_display = currency.convert(running_usd, 'USD', display_currency)
+            running_str = currency.format_amount(running_display, display_currency)
             row_class = "income-row" if r['type'] == 'incoming' else "expense-row"
+            
             table_rows += f"""
             <tr class="{row_class}">
-                <td class="center">{self.clean_text(date_display)}浏
-                <td class="right">{notes}浏
-                <td class="center income">{self.clean_text(incoming)}浏
-                <td class="center expense">{self.clean_text(outgoing)}浏
-                <td class="center">{self.clean_text(running_display)}浏
-            <tr>
+                <td style="text-align: center;">{idx}</td>
+                <td style="text-align: center;">{self.clean_text(date_display)}</td>
+                <td style="text-align: right;">{notes}</td>
+                <td style="text-align: center;">{self.clean_text(incoming_str)}</td>
+                <td style="text-align: center;">{self.clean_text(outgoing_str)}</td>
+                <td style="text-align: center;">{self.clean_text(running_str)}</td>
+             </tr>
 """
-
+        # ترتيب الأعمدة في HTML من اليمين إلى اليسار حسب الترتيب المطلوب:
+        # # , التاريخ , الملاحظات , لنا , له , التراكمي
         html = f"""<!DOCTYPE html>
 <html dir="rtl" lang="ar">
 <head>
@@ -220,68 +216,42 @@ class CompanyDetailsDialog(CenteredDialog):
             margin: 1.5cm;
             direction: rtl;
             background: white;
-            line-height: 1.4;
         }}
         h1 {{
             color: #2c3e50;
             text-align: center;
             border-bottom: 2px solid #3498db;
             padding-bottom: 8px;
-            margin-bottom: 10px;
         }}
         .company-info {{
             text-align: center;
             margin-bottom: 20px;
             color: #2c3e50;
-            font-size: 13px;
             border: 1px solid #ddd;
             padding: 8px;
             background: #f9f9f9;
         }}
-        .summary {{
-            display: flex;
-            justify-content: space-around;
-            align-items: center;
-            margin: 20px 0;
-            gap: 20px;
-            flex-wrap: wrap;
-        }}
-        .summary-item {{
-            text-align: center;
-            flex: 1;
-            background: #f8f9fa;
-            padding: 10px;
-            border-radius: 8px;
-        }}
-        .summary-label {{
-            font-size: 16px;
-            font-weight: bold;
-            margin-bottom: 5px;
-        }}
-        .summary-amount {{
-            font-size: 22px;
-            font-weight: 800;
-        }}
-        .table {{
+        table {{
             width: 100%;
             border-collapse: collapse;
             margin-top: 20px;
+            direction: rtl;
         }}
-        .table th {{
-            background: #2c3e50;
-            color: white;
-            padding: 10px;
-            border: 1px solid #1a252f;
-            text-align: center;
-        }}
-        .table td {{
+        th, td {{
             border: 1px solid #bdc3c7;
             padding: 8px;
         }}
-        .income-row {{ background-color: #d4edda; }}
-        .expense-row {{ background-color: #f8d7da; }}
-        .income {{ color: #28a745; font-weight: bold; }}
-        .expense {{ color: #dc3545; font-weight: bold; }}
+        th {{
+            background: #2c3e50;
+            color: white;
+            text-align: center;
+        }}
+        .income-row td {{
+            background-color: #d4edda;
+        }}
+        .expense-row td {{
+            background-color: #f8d7da;
+        }}
         .footer {{
             text-align: center;
             margin-top: 30px;
@@ -290,8 +260,6 @@ class CompanyDetailsDialog(CenteredDialog):
             border-top: 1px solid #dee2e6;
             padding-top: 10px;
         }}
-        .center {{ text-align: center; }}
-        .right {{ text-align: right; }}
     </style>
 </head>
 <body>
@@ -300,29 +268,14 @@ class CompanyDetailsDialog(CenteredDialog):
         <strong>{self.clean_text(company_info.get('name', 'هوى الشام للسياحة والسفر'))}</strong><br>
         {self.clean_text(company_info.get('address', ''))} | 📞 {self.clean_text(company_info.get('phone', ''))} | ✉️ {self.clean_text(company_info.get('email', ''))}
     </div>
-
-    <div class="summary">
-        <div class="summary-item">
-            <div class="summary-label">صادر (له)</div>
-            <div class="summary-amount" style="color:#dc3545;">{self.clean_text(currency.format_amount(total_out, display_curr))}</div>
-        </div>
-        <div class="summary-item">
-            <div class="summary-label">وارد (لنا)</div>
-            <div class="summary-amount" style="color:#28a745;">{self.clean_text(currency.format_amount(total_in, display_curr))}</div>
-        </div>
-        <div class="summary-item">
-            <div class="summary-label">صافي الرصيد</div>
-            <div class="summary-amount" style="color:#007bff;">{self.clean_text(currency.format_amount(net, display_curr))}</div>
-        </div>
-    </div>
-
-    <table class="table">
+    <table>
         <thead>
             <tr>
+                <th>#</th>
                 <th>{translate('date')}</th>
                 <th>{translate('notes')}</th>
-                <th>{translate('incoming')}</th>
-                <th>{translate('outgoing')}</th>
+                <th>لنا</th>
+                <th>له</th>
                 <th>{translate('cumulative')}</th>
             </tr>
         </thead>
@@ -330,7 +283,6 @@ class CompanyDetailsDialog(CenteredDialog):
             {table_rows}
         </tbody>
     </table>
-
     <div class="footer">
         نظام هوى الشام للسياحة والسفر<br>
         {self.clean_text(date_str)} - {self.clean_text(time_str)}
@@ -343,12 +295,10 @@ class CompanyDetailsDialog(CenteredDialog):
         if not hasattr(self, 'records') or not self.records:
             QMessageBox.warning(self, translate('warning'), translate('no_data_for_print'))
             return
-
         html = self.generate_html_report()
         fd, temp_html = tempfile.mkstemp(suffix='.html', prefix='hawaa_report_')
         os.close(fd)
         with open(temp_html, 'w', encoding='utf-8') as f:
             f.write(html)
-
         webbrowser.open(f'file://{temp_html}')
         QMessageBox.information(self, translate('print_report'), translate('report_opened_in_browser'))

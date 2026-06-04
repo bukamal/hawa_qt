@@ -22,7 +22,6 @@ class AccountsWidget(QWidget):
         layout.setSpacing(12)
         layout.setContentsMargins(12, 12, 12, 12)
 
-        # شريط البحث والإضافة
         search_layout = QHBoxLayout()
         self.search_edit = QLineEdit()
         self.search_edit.setPlaceholderText(translate('search'))
@@ -33,7 +32,6 @@ class AccountsWidget(QWidget):
         search_layout.addWidget(add_btn)
         layout.addLayout(search_layout)
 
-        # أزرار الطباعة والتقارير
         btn_layout = QHBoxLayout()
         self.print_btn = QPushButton("🖨️ " + translate('print_report'))
         self.print_btn.clicked.connect(self.print_report)
@@ -44,7 +42,6 @@ class AccountsWidget(QWidget):
         btn_layout.addStretch()
         layout.addLayout(btn_layout)
 
-        # الجدول
         self.table = CustomTableView()
         self.table.setSelectionBehavior(CustomTableView.SelectRows)
         self.table.doubleClicked.connect(self.show_details)
@@ -54,22 +51,26 @@ class AccountsWidget(QWidget):
 
     def refresh_table(self):
         repo = ExpenseRepository()
-        expenses = repo.get_all(convert_to_display=True)
+        expenses = repo.get_all(convert_to_display=False)  # amount بالدولار الثابت
         search = self.search_edit.text().strip().lower()
-        groups = defaultdict(lambda: {'incoming':0.0, 'outgoing':0.0})
+        groups = defaultdict(lambda: {'incoming': 0.0, 'outgoing': 0.0})
         for e in expenses:
             if search and search not in e['company_name'].lower():
                 continue
-            groups[e['company_name']][e['type']] += e['amount']
+            groups[e['company_name']][e['type']] += e['amount']  # بالدولار
+        
+        display_currency = currency.get_display_currency()
         data = []
         for company, vals in groups.items():
-            net = vals['incoming'] - vals['outgoing']
+            incoming_display = currency.convert(vals['incoming'], 'USD', display_currency)
+            outgoing_display = currency.convert(vals['outgoing'], 'USD', display_currency)
+            net_display = incoming_display - outgoing_display
             data.append({
                 'company': company,
-                'incoming': currency.format_amount(vals['incoming']),
-                'outgoing': currency.format_amount(vals['outgoing']),
-                'net': currency.format_amount(net),
-                'net_raw': net
+                'incoming': currency.format_amount(incoming_display, display_currency),
+                'outgoing': currency.format_amount(outgoing_display, display_currency),
+                'net': currency.format_amount(net_display, display_currency),
+                'net_raw': net_display
             })
         data.sort(key=lambda x: x['company'])
         headers = ['company', 'incoming', 'outgoing', 'net']
@@ -140,11 +141,11 @@ class AccountsWidget(QWidget):
 <body>
 <h1>{title}</h1>
 <table>
-<thead><tr>{"".join(f'<th>{h}</th>' for h in headers)}</tr></thead>
+<thead><tr>{"".join(f'<th>{h}</th>' for h in headers)}</thead>
 <tbody>
 """
         for row in data:
-            html += "<tr>" + "".join(f"一位{cell}一位" for cell in row) + "</tr>"
+            html += "<tr>" + "".join(f"<td>{cell}</td>" for cell in row) + "</tr>"
         html += f"""
 </tbody>
 </table>
@@ -154,7 +155,6 @@ class AccountsWidget(QWidget):
         return html
 
     def show_custom_report_dialog(self):
-        """نافذة لتحديد شركة وفترة زمنية لطباعة تقرير مفصل"""
         dialog = QDialog(self)
         dialog.setWindowTitle("تقرير مخصص لشركة")
         dialog.setLayoutDirection(Qt.RightToLeft)
@@ -163,7 +163,6 @@ class AccountsWidget(QWidget):
 
         form = QFormLayout()
 
-        # قائمة الشركات
         repo = ExpenseRepository()
         expenses = repo.get_all(convert_to_display=False)
         companies = sorted(set(e['company_name'] for e in expenses))
@@ -171,7 +170,6 @@ class AccountsWidget(QWidget):
         self.company_combo.addItems(companies)
         form.addRow("الشركة:", self.company_combo)
 
-        # نوع الفترة
         self.period_type = QComboBox()
         self.period_type.addItems(["شهر محدد", "سنة محددة", "فترة مخصصة"])
         self.period_type.currentIndexChanged.connect(self.on_period_type_changed)
@@ -237,189 +235,66 @@ class AccountsWidget(QWidget):
 
         repo = ExpenseRepository()
         records = repo.get_by_company(company, convert_to_display=False)
-        # تصفية حسب الفترة
         filtered = [r for r in records if start_date <= r['date'] <= end_date]
         if not filtered:
             QMessageBox.warning(self, "تنبيه", "لا توجد بيانات لهذه الشركة خلال الفترة المحددة")
             return
         dialog.accept()
 
-        # حساب الإجماليات
-        display_curr = currency.get_display_currency()
-        total_in = 0.0
-        total_out = 0.0
-        for r in filtered:
-            amt = currency.convert(r['amount'], 'USD', display_curr)
-            if r['type'] == 'incoming':
-                total_in += amt
-            else:
-                total_out += amt
-        net = total_in - total_out
-
-        # بناء الجدول مع التراكمي
+        display_currency = currency.get_display_currency()
         table_rows = ""
-        running = 0.0
+        running_usd = 0.0
         for r in filtered:
-            original_amount = currency.convert(r['amount'], 'USD', r['currency'])
-            amount_str = currency.format_amount(original_amount, r['currency'])
-            if r['currency'] == 'USD' and not amount_str.startswith('$'):
-                amount_str = f"$ {amount_str}"
-            amt_display_val = currency.convert(r['amount'], 'USD', display_curr)
-            if r['type'] == 'incoming':
-                running += amt_display_val
-                incoming = amount_str
-                outgoing = "—"
-            else:
-                running -= amt_display_val
-                incoming = "—"
-                outgoing = amount_str
-            running_display = currency.format_amount(running, display_curr)
+            amount_original = r['amount_original']
+            currency_original = r['currency_original']
+            amount_str = f"{amount_original:,.2f} {currency_original}"
             notes = r['notes'] or '—'
             date_display = r['date']
+            if r['type'] == 'incoming':
+                incoming_str = amount_str
+                outgoing_str = "—"
+                running_usd += r['amount']
+            else:
+                incoming_str = "—"
+                outgoing_str = amount_str
+                running_usd -= r['amount']
+            running_display = currency.convert(running_usd, 'USD', display_currency)
+            running_str = currency.format_amount(running_display, display_currency)
             row_class = "income-row" if r['type'] == 'incoming' else "expense-row"
             table_rows += f"""
             <tr class="{row_class}">
-                <td class="center">{date_display}浏
-                <td class="right">{notes}浏
-                <td class="center income">{incoming}浏
-                <td class="center expense">{outgoing}浏
-                <td class="center">{running_display}浏
+                <td class="center">{date_display}</td>
+                <td class="right">{notes}</td>
+                <td class="center">{incoming_str}</td>
+                <td class="center">{outgoing_str}</td>
+                <td class="center">{running_str}</td>
             </tr>
 """
-
         html = f"""<!DOCTYPE html>
 <html dir="rtl" lang="ar">
-<head>
-    <meta charset="UTF-8">
-    <title>تقرير شركة {company}</title>
-    <style>
-        body {{
-            font-family: 'Tahoma', 'Arial', sans-serif;
-            margin: 1.5cm;
-            direction: rtl;
-            background: white;
-            line-height: 1.4;
-        }}
-        h1 {{
-            color: #2c3e50;
-            text-align: center;
-            border-bottom: 2px solid #3498db;
-            padding-bottom: 8px;
-            margin-bottom: 10px;
-        }}
-        .company-info {{
-            text-align: center;
-            margin-bottom: 20px;
-            color: #2c3e50;
-            font-size: 13px;
-            border: 1px solid #ddd;
-            padding: 8px;
-            background: #f9f9f9;
-        }}
-        .period-info {{
-            text-align: center;
-            margin-bottom: 20px;
-            font-size: 14px;
-            color: #555;
-        }}
-        .summary {{
-            display: flex;
-            justify-content: space-around;
-            align-items: center;
-            margin: 20px 0;
-            gap: 20px;
-            flex-wrap: wrap;
-        }}
-        .summary-item {{
-            text-align: center;
-            flex: 1;
-            background: #f8f9fa;
-            padding: 10px;
-            border-radius: 8px;
-        }}
-        .summary-label {{
-            font-size: 16px;
-            font-weight: bold;
-            margin-bottom: 5px;
-        }}
-        .summary-amount {{
-            font-size: 22px;
-            font-weight: 800;
-        }}
-        .table {{
-            width: 100%;
-            border-collapse: collapse;
-            margin-top: 20px;
-        }}
-        .table th {{
-            background: #2c3e50;
-            color: white;
-            padding: 10px;
-            border: 1px solid #1a252f;
-            text-align: center;
-        }}
-        .table td {{
-            border: 1px solid #bdc3c7;
-            padding: 8px;
-        }}
-        .income-row td {{
-            background-color: #d4edda;
-        }}
-        .expense-row td {{
-            background-color: #f8d7da;
-        }}
-        .income {{ color: #28a745; font-weight: bold; }}
-        .expense {{ color: #dc3545; font-weight: bold; }}
-        .footer {{
-            text-align: center;
-            margin-top: 30px;
-            font-size: 11px;
-            color: #6c757d;
-            border-top: 1px solid #dee2e6;
-            padding-top: 10px;
-        }}
-        .center {{ text-align: center; }}
-        .right {{ text-align: right; }}
-    </style>
+<head><meta charset="UTF-8"><title>تقرير شركة {company}</title>
+<style>
+    body {{ font-family: 'Tahoma', 'Arial', sans-serif; margin: 1.5cm; direction: rtl; background: white; }}
+    h1 {{ color: #2c3e50; text-align: center; border-bottom: 2px solid #3498db; }}
+    .period-info {{ text-align: center; margin-bottom: 20px; }}
+    table {{ width: 100%; border-collapse: collapse; margin-top: 20px; }}
+    th, td {{ border: 1px solid #ccc; padding: 8px; }}
+    th {{ background: #2c3e50; color: white; }}
+    .income-row td {{ background-color: #d4edda; }}
+    .expense-row td {{ background-color: #f8d7da; }}
+    .footer {{ text-align: center; margin-top: 30px; font-size: 12px; color: gray; }}
+    .center {{ text-align: center; }}
+    .right {{ text-align: right; }}
+</style>
 </head>
 <body>
     <h1>📊 تقرير حسابات شركة: {company}</h1>
     <div class="period-info">الفترة: {start_date} إلى {end_date}</div>
-
-    <div class="summary">
-        <div class="summary-item">
-            <div class="summary-label">صادر (له)</div>
-            <div class="summary-amount" style="color:#dc3545;">{currency.format_amount(total_out, display_curr)}</div>
-        </div>
-        <div class="summary-item">
-            <div class="summary-label">وارد (لنا)</div>
-            <div class="summary-amount" style="color:#28a745;">{currency.format_amount(total_in, display_curr)}</div>
-        </div>
-        <div class="summary-item">
-            <div class="summary-label">صافي الرصيد</div>
-            <div class="summary-amount" style="color:#007bff;">{currency.format_amount(net, display_curr)}</div>
-        </div>
-    </div>
-
-    <table class="table">
-        <thead>
-            <tr>
-                <th>التاريخ</th>
-                <th>ملاحظات</th>
-                <th>لنا (وارد)</th>
-                <th>له (صادر)</th>
-                <th>التراكمي</th>
-            </tr>
-        </thead>
-        <tbody>
-            {table_rows}
-        </tbody>
+    <table>
+        <thead><tr><th>التاريخ</th><th>ملاحظات</th><th>لنا</th><th>له</th><th>التراكمي</th></tr></thead>
+        <tbody>{table_rows}</tbody>
     </table>
-
-    <div class="footer">
-        نظام هوى الشام للسياحة والسفر<br>
-        تاريخ الطباعة: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
-    </div>
+    <div class="footer">نظام هوى الشام للسياحة والسفر<br>تاريخ الطباعة: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}</div>
 </body>
 </html>"""
         fd, temp = tempfile.mkstemp(suffix='.html', prefix='hawaa_report_')

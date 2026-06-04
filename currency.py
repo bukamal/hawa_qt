@@ -38,7 +38,6 @@ class CurrencyManager:
         return self._settings_repo.get('abbreviate_numbers', 'false').lower() == 'true'
     
     def get_rate_to_usd(self, currency_code: str) -> float:
-        """جلب سعر الصرف مباشرة من قاعدة البيانات (بدون تخزين مؤقت)"""
         if currency_code == 'USD':
             return 1.0
         conn = DatabaseConnection()
@@ -88,6 +87,7 @@ class CurrencyManager:
         if fmt == 'arabic':
             formatted = formatted.replace('0', '٠').replace('1', '١').replace('2', '٢').replace('3', '٣').replace('4', '٤')\
                                  .replace('5', '٥').replace('6', '٦').replace('7', '٧').replace('8', '٨').replace('9', '٩')
+        # إرجاع الرقم والرمز بدون مسافات إضافية لتجنب تكرار الرمز
         return f"{formatted} {symbol}"
     
     def get_all_currencies(self) -> list:

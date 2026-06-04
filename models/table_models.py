@@ -3,19 +3,14 @@ from typing import List, Dict, Any, Optional
 
 class GenericTableModel(QAbstractTableModel):
     def __init__(self, data: List[Dict], headers: List[str], key_fields: List[str] = None, data_keys: List[str] = None):
-        """
-        نموذج جدول عام
-        :param data: قائمة القواميس (البيانات)
-        :param headers: العناوين التي ستظهر في الواجهة
-        :param key_fields: الحقول التي تمثل المفاتيح الأساسية (للتحديد)
-        :param data_keys: مفاتيح البيانات الفعلية (إذا كانت مختلفة عن headers)
-        """
         super().__init__()
         self._data = data
         self._headers = headers
         self._key_fields = key_fields or []
-        # إذا لم يتم تحديد data_keys، نستخدم headers كمفاتيح (للتوافق مع الكود القديم)
         self._data_keys = data_keys if data_keys is not None else headers
+        # تأكد من تطابق الأطوال
+        if len(self._data_keys) < len(self._headers):
+            self._data_keys.extend([''] * (len(self._headers) - len(self._data_keys)))
 
     def rowCount(self, parent=QModelIndex()) -> int:
         return len(self._data)
@@ -28,10 +23,9 @@ class GenericTableModel(QAbstractTableModel):
             return None
         row = index.row()
         col = index.column()
-        if row >= len(self._data):
+        if row >= len(self._data) or col >= len(self._data_keys):
             return None
         record = self._data[row]
-        # استخدام مفتاح البيانات الفعلي
         key = self._data_keys[col]
         value = record.get(key, '')
         return str(value) if value is not None else ''
@@ -41,7 +35,7 @@ class GenericTableModel(QAbstractTableModel):
             return False
         row = index.row()
         col = index.column()
-        if row >= len(self._data):
+        if row >= len(self._data) or col >= len(self._data_keys):
             return False
         key = self._data_keys[col]
         self._data[row][key] = value
@@ -50,7 +44,8 @@ class GenericTableModel(QAbstractTableModel):
 
     def headerData(self, section, orientation, role):
         if orientation == Qt.Horizontal and role == Qt.DisplayRole:
-            return self._headers[section]
+            if section < len(self._headers):
+                return self._headers[section]
         return None
 
     def flags(self, index):

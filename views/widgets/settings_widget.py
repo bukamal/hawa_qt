@@ -1,5 +1,5 @@
-from PyQt5.QtWidgets import QWidget, QVBoxLayout, QFormLayout, QSpinBox, QComboBox, QPushButton, QMessageBox, QGroupBox, QTableWidget, QTableWidgetItem, QHeaderView, QCheckBox, QLineEdit, QFileDialog
-from PyQt5.QtCore import Qt
+from PyQt5.QtWidgets import QWidget, QVBoxLayout, QFormLayout, QSpinBox, QComboBox, QPushButton, QMessageBox, QGroupBox, QTableWidget, QTableWidgetItem, QHeaderView, QCheckBox, QLineEdit, QFileDialog, QTabWidget
+from PyQt5.QtCore import Qt, pyqtSignal
 from database import SettingsRepository
 from currency import currency
 from i18n.translator import translate, set_language
@@ -8,66 +8,91 @@ from auth.session import UserSession
 from config import get_company_info, save_company_info
 
 class SettingsWidget(QWidget):
+    rates_changed = pyqtSignal()
+
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.setLayoutDirection(Qt.RightToLeft)
         layout = QVBoxLayout(self)
+        layout.setSpacing(15)
+        layout.setContentsMargins(15, 15, 15, 15)
         self.repo = SettingsRepository()
 
-        # مجموعة العملة
+        tabs = QTabWidget()
+        tabs.setLayoutDirection(Qt.RightToLeft)
+        tabs.setDocumentMode(True)
+        tabs.setTabPosition(QTabWidget.North)
+
+        currency_tab = QWidget()
+        currency_tab.setLayoutDirection(Qt.RightToLeft)
+        currency_layout = QVBoxLayout(currency_tab)
+        currency_layout.setSpacing(20)
+        currency_layout.setContentsMargins(15, 15, 15, 15)
+
         currency_group = QGroupBox("إعدادات العملات")
         currency_form = QFormLayout()
-
+        currency_form.setLabelAlignment(Qt.AlignRight)
+        currency_form.setSpacing(12)
         self.base_curr_combo = QComboBox()
         self.base_curr_combo.addItems(["USD", "SAR", "SYP", "EUR", "GBP", "AED", "QAR", "KWD", "OMR"])
         self.base_curr_combo.setCurrentText(currency.get_base_currency())
         currency_form.addRow("العملة الأساسية (للتخزين):", self.base_curr_combo)
-
         self.display_curr_combo = QComboBox()
         self.display_curr_combo.addItems(["USD", "SAR", "SYP", "EUR", "GBP", "AED", "QAR", "KWD", "OMR"])
         self.display_curr_combo.setCurrentText(currency.get_display_currency())
         currency_form.addRow("العملة المعروضة:", self.display_curr_combo)
-
         self.decimals_spin = QSpinBox()
         self.decimals_spin.setRange(0, 2)
         self.decimals_spin.setValue(int(self.repo.get('currency_decimals', '2')))
         currency_form.addRow("الخانات العشرية:", self.decimals_spin)
-
         self.format_combo = QComboBox()
         self.format_combo.addItems(["غربية", "شرقية"])
         current = self.repo.get('number_format', 'western')
         self.format_combo.setCurrentIndex(0 if current == 'western' else 1)
         currency_form.addRow("تنسيق الأرقام:", self.format_combo)
-
         self.abbreviate_check = QCheckBox("اختصار الأعداد الكبيرة (K, M)")
         self.abbreviate_check.setChecked(currency.abbreviate_numbers())
         currency_form.addRow(self.abbreviate_check)
-
         save_currency = QPushButton("حفظ إعدادات العملة")
         save_currency.clicked.connect(self.save_currency_settings)
         currency_form.addRow(save_currency)
         currency_group.setLayout(currency_form)
-        layout.addWidget(currency_group)
+        currency_layout.addWidget(currency_group)
+        currency_layout.addStretch()
+        tabs.addTab(currency_tab, "💰 العملات")
 
-        # مجموعة أسعار الصرف
+        rates_tab = QWidget()
+        rates_tab.setLayoutDirection(Qt.RightToLeft)
+        rates_layout = QVBoxLayout(rates_tab)
+        rates_layout.setSpacing(15)
+        rates_layout.setContentsMargins(15, 15, 15, 15)
+
         rates_group = QGroupBox("أسعار الصرف (1 دولار = ?)")
-        rates_layout = QVBoxLayout()
-
+        rates_inner_layout = QVBoxLayout()
         self.rates_table = QTableWidget()
+        self.rates_table.setLayoutDirection(Qt.RightToLeft)
         self.rates_table.setColumnCount(3)
         self.rates_table.setHorizontalHeaderLabels(["العملة", "السعر", "آخر تحديث"])
         self.rates_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        rates_layout.addWidget(self.rates_table)
-
+        rates_inner_layout.addWidget(self.rates_table)
         refresh_rates_btn = QPushButton("تحديث الأسعار من الإنترنت")
         refresh_rates_btn.clicked.connect(self.fetch_online_rates)
-        rates_layout.addWidget(refresh_rates_btn)
+        rates_inner_layout.addWidget(refresh_rates_btn)
+        rates_group.setLayout(rates_inner_layout)
+        rates_layout.addWidget(rates_group)
+        rates_layout.addStretch()
+        tabs.addTab(rates_tab, "💱 أسعار الصرف")
 
-        rates_group.setLayout(rates_layout)
-        layout.addWidget(rates_group)
+        company_tab = QWidget()
+        company_tab.setLayoutDirection(Qt.RightToLeft)
+        company_layout = QVBoxLayout(company_tab)
+        company_layout.setSpacing(15)
+        company_layout.setContentsMargins(15, 15, 15, 15)
 
-        # مجموعة معلومات الشركة للطباعة
         company_group = QGroupBox("معلومات الشركة للطباعة")
         company_form = QFormLayout()
+        company_form.setLabelAlignment(Qt.AlignRight)
+        company_form.setSpacing(12)
         info = get_company_info()
         self.company_name_edit = QLineEdit(info.get('name', ''))
         company_form.addRow("اسم الشركة:", self.company_name_edit)
@@ -86,25 +111,33 @@ class SettingsWidget(QWidget):
         save_company_btn.clicked.connect(self.save_company_info)
         company_form.addRow(save_company_btn)
         company_group.setLayout(company_form)
-        layout.addWidget(company_group)
+        company_layout.addWidget(company_group)
+        company_layout.addStretch()
+        tabs.addTab(company_tab, "🏢 الشركة")
 
-        # باقي الإعدادات
+        lang_theme_tab = QWidget()
+        lang_theme_tab.setLayoutDirection(Qt.RightToLeft)
+        lang_theme_layout = QVBoxLayout(lang_theme_tab)
+        lang_theme_layout.setSpacing(20)
+        lang_theme_layout.setContentsMargins(15, 15, 15, 15)
+
         lang_group = QGroupBox("اللغة")
         lang_form = QFormLayout()
+        lang_form.setLabelAlignment(Qt.AlignRight)
         self.lang_combo = QComboBox()
         self.lang_combo.addItems(["العربية", "English", "Français"])
         cur_lang = self.repo.get('language', 'ar')
-        idx_map = {'ar':0, 'en':1, 'fr':2}
+        idx_map = {'ar': 0, 'en': 1, 'fr': 2}
         self.lang_combo.setCurrentIndex(idx_map.get(cur_lang, 0))
         lang_form.addRow("اختر اللغة:", self.lang_combo)
         save_lang = QPushButton("تغيير اللغة")
         save_lang.clicked.connect(self.save_language)
         lang_form.addRow(save_lang)
         lang_group.setLayout(lang_form)
-        layout.addWidget(lang_group)
 
         theme_group = QGroupBox("المظهر")
         theme_form = QFormLayout()
+        theme_form.setLabelAlignment(Qt.AlignRight)
         self.theme_combo = QComboBox()
         self.theme_combo.addItems(["فاتح", "داكن"])
         cur_theme = self.repo.get('theme', 'light')
@@ -114,9 +147,13 @@ class SettingsWidget(QWidget):
         save_theme.clicked.connect(self.save_theme)
         theme_form.addRow(save_theme)
         theme_group.setLayout(theme_form)
-        layout.addWidget(theme_group)
 
-        layout.addStretch()
+        lang_theme_layout.addWidget(lang_group)
+        lang_theme_layout.addWidget(theme_group)
+        lang_theme_layout.addStretch()
+        tabs.addTab(lang_theme_tab, "🌐 اللغة والمظهر")
+
+        layout.addWidget(tabs)
         self.load_rates_table()
 
     def load_rates_table(self):
@@ -142,15 +179,16 @@ class SettingsWidget(QWidget):
         self.repo.set('number_format', fmt)
         self.repo.set('abbreviate_numbers', abbrev)
 
-        # تحديث أسعار الصرف في جدول exchange_rates بناءً على الجدول
         for row in range(self.rates_table.rowCount()):
             code = self.rates_table.item(row, 0).text()
             rate_text = self.rates_table.item(row, 1).text()
+            clean_rate_text = rate_text.replace(',', '').replace(' ', '').strip()
             try:
-                rate = float(rate_text)
+                rate = float(clean_rate_text)
                 currency.update_rate(code, rate)
-            except:
-                pass
+            except ValueError:
+                QMessageBox.warning(self, "خطأ", f"سعر غير صالح للعملة {code}: {rate_text}")
+                return
 
         QMessageBox.information(self, translate('success'), "تم حفظ إعدادات العملة وأسعار الصرف")
         main_window = self.window()
@@ -160,6 +198,8 @@ class SettingsWidget(QWidget):
             main_window.pages['dashboard'].refresh()
         if hasattr(main_window, 'pages') and 'accounts' in main_window.pages:
             main_window.pages['accounts'].refresh_table()
+        
+        self.rates_changed.emit()
 
     def fetch_online_rates(self):
         import requests
@@ -171,7 +211,7 @@ class SettingsWidget(QWidget):
                 for row in range(self.rates_table.rowCount()):
                     code = self.rates_table.item(row, 0).text()
                     if code in rates:
-                        new_rate = 1.0 / rates[code]
+                        new_rate = rates[code]
                         self.rates_table.item(row, 1).setText(f"{new_rate:.4f}")
                 QMessageBox.information(self, "نجاح", "تم تحديث الأسعار من الإنترنت")
             else:
@@ -180,7 +220,7 @@ class SettingsWidget(QWidget):
             QMessageBox.warning(self, "خطأ", f"حدث خطأ: {str(e)}")
 
     def save_language(self):
-        lang_map = {0:'ar',1:'en',2:'fr'}
+        lang_map = {0: 'ar', 1: 'en', 2: 'fr'}
         new_lang = lang_map[self.lang_combo.currentIndex()]
         self.repo.set('language', new_lang)
         set_language(new_lang)
@@ -209,3 +249,4 @@ class SettingsWidget(QWidget):
         }
         save_company_info(info)
         QMessageBox.information(self, "نجاح", "تم حفظ معلومات الشركة")
+

@@ -12,7 +12,7 @@ class AddEditExpenseDialog(CenteredDialog):
         self.expense = expense
         self.predefined_company = company_name
         self.setWindowTitle(translate('add') if not expense else translate('edit'))
-        self.resize(550, 550)
+        self.resize(550, 600)
         self.settings = QSettings("Hawaa", "Accounting")
         layout = QVBoxLayout(self.content_widget)
         layout.setSpacing(16)
@@ -20,7 +20,6 @@ class AddEditExpenseDialog(CenteredDialog):
         
         form = QFormLayout()
         
-        # حقل اسم الشركة (يُخفى إذا تم تمرير company_name)
         self.company_edit = QLineEdit()
         if self.predefined_company:
             self.company_edit.setText(self.predefined_company)
@@ -30,7 +29,6 @@ class AddEditExpenseDialog(CenteredDialog):
             self.company_edit.setText(expense['company_name'])
         form.addRow(translate('company_name')+":", self.company_edit)
         
-        # حقل المبلغ مع العملة
         amount_layout = QHBoxLayout()
         self.amount_spin = QDoubleSpinBox()
         self.amount_spin.setRange(0.01, 999999999)
@@ -41,7 +39,7 @@ class AddEditExpenseDialog(CenteredDialog):
         currencies = ["USD", "SAR", "SYP", "EUR", "GBP", "AED", "QAR", "KWD", "OMR"]
         self.currency_combo.addItems(currencies)
         if expense:
-            curr = expense.get('currency', 'SAR')
+            curr = expense.get('currency_original', expense.get('currency', 'SAR'))
             idx = currencies.index(curr) if curr in currencies else 0
             self.currency_combo.setCurrentIndex(idx)
         else:
@@ -60,6 +58,15 @@ class AddEditExpenseDialog(CenteredDialog):
         self.rate_label = QLabel()
         self.rate_label.setStyleSheet("color: #10b981; font-size: 10px;")
         form.addRow("", self.rate_label)
+        
+        # عرض سعر الصرف التاريخي عند التعديل
+        self.historical_rate_label = QLabel()
+        self.historical_rate_label.setStyleSheet("color: #f59e0b; font-size: 10px; font-weight: bold;")
+        if expense and expense.get('exchange_rate_to_usd'):
+            rate_hist = expense['exchange_rate_to_usd']
+            curr_hist = expense.get('currency_original', expense.get('currency', 'SAR'))
+            self.historical_rate_label.setText(f"🗓️ سعر الصرف عند الإدراج: 1 USD = {rate_hist:.4f} {curr_hist}")
+        form.addRow("", self.historical_rate_label)
         
         self.type_combo = QComboBox()
         self.type_combo.addItems([translate('incoming'), translate('outgoing')])
@@ -91,25 +98,17 @@ class AddEditExpenseDialog(CenteredDialog):
         
         self.amount_spin.valueChanged.connect(self.update_labels)
         self.currency_combo.currentTextChanged.connect(self.update_labels)
+        if expense:
+            self.amount_spin.setValue(expense.get('amount_original', expense['amount']))
         self.update_labels()
     
     def update_labels(self):
         amount = self.amount_spin.value()
         curr = self.currency_combo.currentText()
-        display_curr = currency.get_display_currency()
-        # تحديث التحويل
-        if curr != display_curr:
-            converted = currency.convert(amount, curr, display_curr)
-            self.conversion_label.setText(f"≈ {currency.format_amount(converted, display_curr)}")
-        else:
-            self.conversion_label.setText("")
-        # تحديث سعر الصرف الحالي مقابل الدولار
-        rate_to_usd = currency.get_rate_to_usd(curr)
-        if curr == 'USD':
-            self.rate_label.setText(f"سعر الصرف: 1 {curr} = 1 USD (العملة الأساسية)")
-        else:
-            usd_per_curr = 1.0 / rate_to_usd
-            self.rate_label.setText(f"سعر الصرف الحالي: 1 {curr} = {usd_per_curr:.4f} USD | 1 USD = {rate_to_usd:.4f} {curr}")
+        rate = currency.get_rate_to_usd(curr)
+        usd_value = amount / rate if rate != 0 else 0
+        self.conversion_label.setText(f"≈ {usd_value:.2f} USD (حسب سعر الصرف الحالي)")
+        self.rate_label.setText(f"سعر الصرف الحالي: 1 USD = {rate:.4f} {curr}")
     
     def save(self):
         if self.predefined_company:

@@ -46,7 +46,10 @@ def init_database():
             created_by INTEGER,
             created_at TEXT,
             updated_by INTEGER,
-            updated_at TEXT
+            updated_at TEXT,
+            amount_original REAL NOT NULL DEFAULT 0,
+            currency_original TEXT NOT NULL DEFAULT 'SAR',
+            exchange_rate_to_usd REAL NOT NULL DEFAULT 1.0
         );
         
         CREATE TABLE IF NOT EXISTS settings (
@@ -98,10 +101,29 @@ def init_database():
         ''', ('admin', pwd_hash, salt, 'المدير العام', 'admin', now, 1))
     
     conn.commit()
-    print("✅ تم تهيئة قاعدة البيانات مع دعم العملات المتعددة واختصار الأعداد")
+    print("✅ تم تهيئة قاعدة البيانات مع دعم العملات المتعددة واختصار الأعداد والأعمدة الأصلية")
 
 def ensure_db():
     if not os.path.exists(DB_PATH):
         init_database()
     else:
+        # محاولة إضافة الأعمدة الجديدة إذا كانت قاعدة البيانات موجودة مسبقاً
+        try:
+            conn = sqlite3.connect(DB_PATH)
+            cursor = conn.cursor()
+            cursor.execute("PRAGMA table_info(expenses)")
+            columns = [col[1] for col in cursor.fetchall()]
+            if 'amount_original' not in columns:
+                cursor.execute("ALTER TABLE expenses ADD COLUMN amount_original REAL NOT NULL DEFAULT 0")
+            if 'currency_original' not in columns:
+                cursor.execute("ALTER TABLE expenses ADD COLUMN currency_original TEXT NOT NULL DEFAULT 'SAR'")
+            if 'exchange_rate_to_usd' not in columns:
+                cursor.execute("ALTER TABLE expenses ADD COLUMN exchange_rate_to_usd REAL NOT NULL DEFAULT 1.0")
+            # تحديث البيانات القديمة بالقيم الافتراضية
+            cursor.execute("UPDATE expenses SET amount_original = amount, currency_original = currency, exchange_rate_to_usd = 1.0 WHERE amount_original = 0")
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            print(f"تحذير: تعذر تحديث قاعدة البيانات القديمة: {e}")
+        # ثم ننشئ الجداول المتبقية إذا لم تكن موجودة
         init_database()
