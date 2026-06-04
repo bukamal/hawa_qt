@@ -1,4 +1,4 @@
-from PyQt5.QtWidgets import QVBoxLayout, QLabel, QLineEdit, QPushButton, QHBoxLayout, QCheckBox, QComboBox, QMessageBox, QApplication
+from PyQt5.QtWidgets import QVBoxLayout, QLabel, QLineEdit, QPushButton, QHBoxLayout, QCheckBox, QComboBox, QMessageBox
 from PyQt5.QtCore import Qt, QSettings
 import qtawesome as qta
 from views.frameless_dialog import FramelessDialog
@@ -20,6 +20,7 @@ class LoginDialog(FramelessDialog):
         layout.setSpacing(16)
         layout.setContentsMargins(30, 20, 30, 30)
 
+        # شعار
         logo = QLabel("🏢 هوى الشام")
         logo.setAlignment(Qt.AlignCenter)
         logo.setStyleSheet(f"font-size: 32px; font-weight: bold; color: {ThemeManager.get('primary')};")
@@ -32,6 +33,7 @@ class LoginDialog(FramelessDialog):
 
         layout.addSpacing(20)
 
+        # اسم المستخدم (قائمة منسدلة)
         self.username_combo = QComboBox()
         self.username_combo.setEditable(True)
         self.username_combo.setPlaceholderText(translate('username'))
@@ -39,11 +41,11 @@ class LoginDialog(FramelessDialog):
         self._populate_users()
         layout.addWidget(self.username_combo)
 
+        # كلمة المرور
         pwd_layout = QHBoxLayout()
         self.password_edit = QLineEdit()
         self.password_edit.setPlaceholderText(translate('password'))
         self.password_edit.setEchoMode(QLineEdit.Password)
-        self.password_edit.returnPressed.connect(self._do_login)
         self.show_pwd_btn = QPushButton()
         self.show_pwd_btn.setIcon(qta.icon('fa5s.eye'))
         self.show_pwd_btn.setFixedSize(40, 40)
@@ -53,6 +55,7 @@ class LoginDialog(FramelessDialog):
         pwd_layout.addWidget(self.show_pwd_btn)
         layout.addLayout(pwd_layout)
 
+        # خيارات
         options_layout = QHBoxLayout()
         self.remember_check = QCheckBox("تذكر المستخدم")
         self.remember_check.setStyleSheet(f"color: {ThemeManager.get('text_secondary')};")
@@ -72,13 +75,30 @@ class LoginDialog(FramelessDialog):
         layout.addWidget(self.error_label)
         layout.addSpacing(10)
 
+        # زر تسجيل الدخول
         self.login_btn = QPushButton(translate('login'))
         self.login_btn.setObjectName("primary")
         self.login_btn.setMinimumHeight(45)
+        self.login_btn.setStyleSheet(f"""
+            QPushButton#primary {{
+                background-color: {ThemeManager.get('primary')};
+                color: white;
+                border: none;
+                border-radius: 8px;
+                font-size: 14px;
+                font-weight: bold;
+                padding: 12px 24px;
+            }}
+            QPushButton#primary:hover {{
+                background-color: {ThemeManager.get('primary_hover')};
+            }}
+        """)
         self.login_btn.clicked.connect(self._do_login)
         layout.addWidget(self.login_btn)
 
+        # زر تبديل الحساب
         switch_btn = QPushButton("🔄 تبديل الحساب / مسح البيانات")
+        switch_btn.setStyleSheet(f"background-color: transparent; color: {ThemeManager.get('text_muted')}; border: none; font-size: 12px;")
         switch_btn.clicked.connect(self._switch_account)
         layout.addWidget(switch_btn)
 
@@ -102,13 +122,13 @@ class LoginDialog(FramelessDialog):
             self.show_pwd_btn.setIcon(qta.icon('fa5s.eye'))
 
     def _load_saved_user(self):
-        saved_username = self.settings.value("login/username", "")
-        if saved_username:
-            index = self.username_combo.findText(saved_username)
-            if index >= 0:
-                self.username_combo.setCurrentIndex(index)
+        saved = self.settings.value("login/username", "")
+        if saved:
+            idx = self.username_combo.findText(saved)
+            if idx >= 0:
+                self.username_combo.setCurrentIndex(idx)
             else:
-                self.username_combo.setEditText(saved_username)
+                self.username_combo.setEditText(saved)
             self.remember_check.setChecked(True)
             self.password_edit.setFocus()
 
@@ -124,6 +144,7 @@ class LoginDialog(FramelessDialog):
         self.password_edit.clear()
         self.remember_check.setChecked(False)
         self.error_label.setText("تم مسح بيانات المستخدم المخزنة")
+        self.error_label.setStyleSheet(f"color: {ThemeManager.get('success')};")
         self._populate_users()
 
     def _change_lang(self, index):
@@ -150,18 +171,12 @@ class LoginDialog(FramelessDialog):
         else:
             self.error_label.setText("اسم المستخدم أو كلمة المرور غير صحيحة")
             self.password_edit.clear()
+            self.password_edit.setFocus()
 
     def showEvent(self, event):
-        self._center_dialog()
+        self.center()
         super().showEvent(event)
 
-    def _center_dialog(self):
-        parent = self.parent()
-        if parent and parent.isVisible():
-            geo = parent.geometry()
-            x = geo.x() + (geo.width() - self.width()) // 2
-            y = geo.y() + (geo.height() - self.height()) // 2
-            self.move(x, y)
-        else:
-            screen = self.screen().geometry()
-            self.move((screen.width() - self.width()) // 2, (screen.height() - self.height()) // 2)
+    def center(self):
+        screen = self.screen().geometry()
+        self.move((screen.width() - self.width()) // 2, (screen.height() - self.height()) // 2)

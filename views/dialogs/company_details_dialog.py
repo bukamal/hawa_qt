@@ -1,5 +1,5 @@
 from PyQt5.QtWidgets import QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QMessageBox, QHeaderView, QFileDialog
-from PyQt5.QtCore import Qt, QUrl, QEventLoop
+from PyQt5.QtCore import Qt
 from PyQt5.QtPrintSupport import QPrinter, QPrintPreviewDialog
 from PyQt5.QtGui import QTextDocument, QFont
 from database import ExpenseRepository
@@ -12,17 +12,10 @@ from views.dialogs.add_edit_expense_dialog import AddEditExpenseDialog
 from currency import currency
 from datetime import datetime
 from config import get_company_info
-import os
-import tempfile
 import webbrowser
+import tempfile
+import os
 import re
-
-# محاولة استيراد WebEngine للطباعة المباشرة
-try:
-    from PyQt5.QtWebEngineWidgets import QWebEngineView
-    WEBENGINE_AVAILABLE = True
-except ImportError:
-    WEBENGINE_AVAILABLE = False
 
 class CompanyDetailsDialog(CenteredDialog):
     def __init__(self, company_name, parent=None):
@@ -105,7 +98,7 @@ class CompanyDetailsDialog(CenteredDialog):
                 'running': running_balance_display
             })
         headers = ['date', 'notes', 'incoming', 'outgoing', 'running']
-        display_headers = [translate('date'), translate('notes'), translate('incoming'), translate('outgoing'), "التراكمي"]
+        display_headers = [translate('date'), translate('notes'), translate('incoming'), translate('outgoing'), translate('cumulative')]
         self.model = GenericTableModel(data, display_headers, key_fields=['id'], data_keys=headers)
         self.table.setModel(self.model)
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
@@ -156,7 +149,8 @@ class CompanyDetailsDialog(CenteredDialog):
             if self.parent() and hasattr(self.parent(), 'refresh_table'):
                 self.parent().refresh_table()
 
-    def clean_text(self, text):
+    @staticmethod
+    def clean_text(text):
         if not text:
             return ''
         text = str(text)
@@ -205,12 +199,12 @@ class CompanyDetailsDialog(CenteredDialog):
             row_class = "income-row" if r['type'] == 'incoming' else "expense-row"
             table_rows += f"""
             <tr class="{row_class}">
-                <td style="text-align:center;">{self.clean_text(running_display)}浏
-                <td style="text-align:center;color:#dc3545;">{self.clean_text(outgoing)}浏
-                <td style="text-align:center;color:#28a745;">{self.clean_text(incoming)}浏
-                <td style="text-align:right;">{notes}浏
-                <td style="text-align:center;">{self.clean_text(date_display)}浏
-            <tr>
+                <td class="center">{self.clean_text(running_display)}浏
+                <td class="center expense">{self.clean_text(outgoing)}浏
+                <td class="center income">{self.clean_text(incoming)}浏
+                <td class="right">{notes}浏
+                <td class="center">{self.clean_text(date_display)}浏
+            </tr>
 """
 
         html = f"""<!DOCTYPE html>
@@ -220,7 +214,7 @@ class CompanyDetailsDialog(CenteredDialog):
     <title>تقرير حسابات {self.clean_text(self.company_name)}</title>
     <style>
         body {{
-            font-family: 'Segoe UI', 'Arial', 'Tahoma', sans-serif;
+            font-family: 'Tahoma', 'Arial', sans-serif;
             margin: 1.5cm;
             direction: rtl;
             background: white;
@@ -282,12 +276,10 @@ class CompanyDetailsDialog(CenteredDialog):
             border: 1px solid #bdc3c7;
             padding: 8px;
         }}
-        .income-row {{
-            background-color: #d4edda;
-        }}
-        .expense-row {{
-            background-color: #f8d7da;
-        }}
+        .income-row {{ background-color: #d4edda; }}
+        .expense-row {{ background-color: #f8d7da; }}
+        .income {{ color: #28a745; font-weight: bold; }}
+        .expense {{ color: #dc3545; font-weight: bold; }}
         .footer {{
             text-align: center;
             margin-top: 30px;
@@ -296,12 +288,8 @@ class CompanyDetailsDialog(CenteredDialog):
             border-top: 1px solid #dee2e6;
             padding-top: 10px;
         }}
-        @media print {{
-            body {{
-                margin: 0;
-                padding: 0;
-            }}
-        }}
+        .center {{ text-align: center; }}
+        .right {{ text-align: right; }}
     </style>
 </head>
 <body>
@@ -329,11 +317,11 @@ class CompanyDetailsDialog(CenteredDialog):
     <table class="table">
         <thead>
             <tr>
-                <th>التراكمي</th>
+                <th>{translate('cumulative')}</th>
                 <th>له (صادر)</th>
                 <th>لنا (وارد)</th>
-                <th>ملاحظات</th>
-                <th>التاريخ</th>
+                <th>{translate('notes')}</th>
+                <th>{translate('date')}</th>
             </tr>
         </thead>
         <tbody>
@@ -351,35 +339,15 @@ class CompanyDetailsDialog(CenteredDialog):
 
     def print_company_report(self):
         if not hasattr(self, 'records') or not self.records:
-            QMessageBox.warning(self, "تنبيه", "لا توجد بيانات للطباعة")
+            QMessageBox.warning(self, translate('warning'), translate('no_data_for_print'))
             return
 
         html = self.generate_html_report()
-        # حفظ HTML مؤقتاً
         fd, temp_html = tempfile.mkstemp(suffix='.html', prefix='hawaa_report_')
         os.close(fd)
         with open(temp_html, 'w', encoding='utf-8') as f:
             f.write(html)
 
-        # إذا كانت WebEngine متاحة → استخدامها للطباعة المباشرة
-        if WEBENGINE_AVAILABLE:
-            try:
-                web_view = QWebEngineView()
-                web_view.load(QUrl.fromLocalFile(temp_html))
-                loop = QEventLoop()
-                web_view.loadFinished.connect(loop.quit)
-                loop.exec()
-                printer = QPrinter(QPrinter.HighResolution)
-                preview = QPrintPreviewDialog(printer, self)
-                preview.paintRequested.connect(lambda p: web_view.page().print(p, lambda success: None))
-                preview.exec()
-                web_view.deleteLater()
-                return
-            except Exception as e:
-                print(f"WebEngine print failed: {e}")
-                # في حال الفشل، ننتقل إلى المتصفح
-
-        # البديل: فتح المتصفح (يعمل دائماً)
+        # فتح في المتصفح (أبسط وأضمن طريقة للعربية والتنسيق)
         webbrowser.open(f'file://{temp_html}')
-        QMessageBox.information(self, "طباعة التقرير", 
-                                "تم فتح التقرير في المتصفح.\nاستخدم Ctrl+P للطباعة أو حفظ كـ PDF.\n\nملاحظة: لتجربة الطباعة المباشرة داخل التطبيق، قم بتثبيت PyQtWebEngine.")
+        QMessageBox.information(self, translate('print_report'), translate('report_opened_in_browser'))

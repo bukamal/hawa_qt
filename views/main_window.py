@@ -1,5 +1,5 @@
 from PyQt5.QtWidgets import QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QStackedWidget, QPushButton, QLabel, QFrame, QMessageBox, QApplication
-from PyQt5.QtCore import Qt, QPoint, QPropertyAnimation
+from PyQt5.QtCore import Qt, QPoint, QPropertyAnimation, QEasingCurve
 from PyQt5.QtGui import QIcon
 import qtawesome as qta
 from auth.session import UserSession
@@ -11,6 +11,7 @@ from views.widgets.accounts_widget import AccountsWidget
 from views.widgets.users_widget import UsersWidget
 from views.widgets.audit_log_widget import AuditLogWidget
 from views.widgets.settings_widget import SettingsWidget
+from views.widgets.reports_widget import ReportsWidget
 from views.dialogs.change_password_dialog import ChangePasswordDialog
 from views.login_dialog import LoginDialog
 from views.custom_table_view import CustomTableView
@@ -20,7 +21,6 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowFlags(Qt.FramelessWindowHint)
         self.setAttribute(Qt.WA_TranslucentBackground)
-        self.setLayoutDirection(Qt.LeftToRight)  # LTR
         self.setMinimumSize(1200, 700)
         self.resize(1400, 900)
         self.drag_pos = None
@@ -35,17 +35,7 @@ class MainWindow(QMainWindow):
 
         self.setup_ui()
         self.setup_sidebar()
-        # فتح تبويب الحسابات افتراضياً (ليس dashboard)
-        self.switch_page('accounts')
-
-        # ربط مفتاح Esc لفتح تبويب الحسابات
-        self.installEventFilter(self)
-
-    def eventFilter(self, obj, event):
-        if event.type() == event.KeyPress and event.key() == Qt.Key_Escape:
-            self.switch_page('accounts')
-            return True
-        return super().eventFilter(obj, event)
+        self.switch_page('dashboard')
 
     def setup_ui(self):
         central = QWidget()
@@ -55,8 +45,10 @@ class MainWindow(QMainWindow):
         main_layout.setContentsMargins(0,0,0,0)
         main_layout.setSpacing(0)
 
+        # شريط العنوان
         self.title_bar = QFrame()
         self.title_bar.setFixedHeight(50)
+        self.title_bar.setObjectName("title_bar")
         title_layout = QHBoxLayout(self.title_bar)
         title_layout.setContentsMargins(15,0,10,0)
 
@@ -67,12 +59,11 @@ class MainWindow(QMainWindow):
         title_layout.addWidget(self.title_label)
         title_layout.addStretch()
 
-        # أزرار LTR (إغلاق، تكبير، تصغير) على اليمين
-        self.close_btn = QPushButton()
-        self.close_btn.setIcon(qta.icon('fa5s.times'))
-        self.close_btn.setFixedSize(32,32)
-        self.close_btn.clicked.connect(self.close_app)
-        title_layout.addWidget(self.close_btn)
+        self.min_btn = QPushButton()
+        self.min_btn.setIcon(qta.icon('fa5s.window-minimize'))
+        self.min_btn.setFixedSize(32,32)
+        self.min_btn.clicked.connect(self.showMinimized)
+        title_layout.addWidget(self.min_btn)
 
         self.max_btn = QPushButton()
         self.max_btn.setIcon(qta.icon('fa5s.window-maximize'))
@@ -80,14 +71,15 @@ class MainWindow(QMainWindow):
         self.max_btn.clicked.connect(self.toggle_maximize)
         title_layout.addWidget(self.max_btn)
 
-        self.min_btn = QPushButton()
-        self.min_btn.setIcon(qta.icon('fa5s.window-minimize'))
-        self.min_btn.setFixedSize(32,32)
-        self.min_btn.clicked.connect(self.showMinimized)
-        title_layout.addWidget(self.min_btn)
+        self.close_btn = QPushButton()
+        self.close_btn.setIcon(qta.icon('fa5s.times'))
+        self.close_btn.setFixedSize(32,32)
+        self.close_btn.clicked.connect(self.close_app)
+        title_layout.addWidget(self.close_btn)
 
         main_layout.addWidget(self.title_bar)
 
+        # المحتوى
         content_container = QWidget()
         content_layout = QHBoxLayout(content_container)
         content_layout.setContentsMargins(0,0,0,0)
@@ -99,11 +91,9 @@ class MainWindow(QMainWindow):
         self.sidebar_layout = QVBoxLayout(self.sidebar)
         self.sidebar_layout.setContentsMargins(10,20,10,20)
         self.sidebar_layout.setSpacing(8)
+        content_layout.addWidget(self.sidebar)
 
         self.stack = QStackedWidget()
-
-        # LTR: قائمة جانبية على اليسار
-        content_layout.addWidget(self.sidebar)
         content_layout.addWidget(self.stack, 1)
 
         main_layout.addWidget(content_container)
@@ -119,7 +109,9 @@ class MainWindow(QMainWindow):
             self.pages['users'] = UsersWidget(self)
             self.pages['audit_log'] = AuditLogWidget(self)
         self.pages['settings'] = SettingsWidget(self)
+        self.pages['reports'] = ReportsWidget(self)
         self.pages['accounts'].data_changed.connect(self.pages['dashboard'].refresh_needed.emit)
+
         for page in self.pages.values():
             self.stack.addWidget(page)
 
@@ -138,7 +130,11 @@ class MainWindow(QMainWindow):
         self.sidebar_layout.addWidget(self.logo_label)
 
         self.nav_buttons = {}
-        pages = [('dashboard','📊',translate('dashboard')), ('accounts','📋',translate('accounts'))]
+        pages = [
+            ('dashboard','📊',translate('dashboard')),
+            ('accounts','📋',translate('accounts')),
+            ('reports','📈',translate('reports')),
+        ]
         if UserSession.is_admin():
             pages.append(('users','👥',translate('users')))
             pages.append(('audit_log','📜',translate('audit_log')))
@@ -185,8 +181,14 @@ class MainWindow(QMainWindow):
             self.change_pwd_btn.setText("🔑")
             self.logo_label.setText("🏢")
         else:
-            texts = {'dashboard':('📊',translate('dashboard')), 'accounts':('📋',translate('accounts')),
-                     'users':('👥',translate('users')), 'audit_log':('📜',translate('audit_log')), 'settings':('⚙️',translate('settings'))}
+            texts = {
+                'dashboard':('📊',translate('dashboard')),
+                'accounts':('📋',translate('accounts')),
+                'users':('👥',translate('users')),
+                'audit_log':('📜',translate('audit_log')),
+                'settings':('⚙️',translate('settings')),
+                'reports':('📈',translate('reports'))
+            }
             for pid,btn in self.nav_buttons.items():
                 if pid in texts:
                     icon,txt = texts[pid]
@@ -236,7 +238,7 @@ class MainWindow(QMainWindow):
             if login.exec() == LoginDialog.Accepted:
                 self.refresh_pages_after_login()
                 self.show()
-                self.switch_page('accounts')
+                self.switch_page('dashboard')
             else:
                 self.close()
 
@@ -250,6 +252,7 @@ class MainWindow(QMainWindow):
             self.pages['users'] = UsersWidget(self)
             self.pages['audit_log'] = AuditLogWidget(self)
         self.pages['settings'] = SettingsWidget(self)
+        self.pages['reports'] = ReportsWidget(self)
         self.pages['accounts'].data_changed.connect(self.pages['dashboard'].refresh_needed.emit)
         for page in self.pages.values():
             self.stack.addWidget(page)
@@ -262,7 +265,11 @@ class MainWindow(QMainWindow):
             if w and w not in [self.toggle_btn, self.logo_label, self.logout_btn, self.change_pwd_btn]:
                 w.deleteLater()
         self.nav_buttons.clear()
-        pages = [('dashboard','📊',translate('dashboard')), ('accounts','📋',translate('accounts'))]
+        pages = [
+            ('dashboard','📊',translate('dashboard')),
+            ('accounts','📋',translate('accounts')),
+            ('reports','📈',translate('reports')),
+        ]
         if UserSession.is_admin():
             pages.append(('users','👥',translate('users')))
             pages.append(('audit_log','📜',translate('audit_log')))
