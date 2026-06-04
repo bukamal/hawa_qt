@@ -32,7 +32,6 @@ jobs:
       run: |
         pyinstaller --collect-all PyQt5 --collect-all PyQtWebEngine `
           --hidden-import decimal --hidden-import sqlite3 `
-          --hidden-import uvicorn --hidden-import fastapi `
           --add-data "${{ steps.qtpath.outputs.platforms_path }};platforms" `
           --onedir --windowed --name HawaaSham main.py
 

@@ -1,83 +1,123 @@
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+import json
 import sqlite3
 import os
 import uuid
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
-from typing import List, Optional, Any, Dict
-import uvicorn
+from http.server import HTTPServer, BaseHTTPRequestHandler
+import urllib.parse
 
-app = FastAPI(title="Hawaa SQLite Server")
+DB_PATH = os.path.join(os.path.dirname(__file__), 'hawaa_data.db')
+connections = {}
 
-connections: Dict[str, sqlite3.Connection] = {}
-
-class ExecuteRequest(BaseModel):
-    connection_id: str
-    sql: str
-    params: List[Any] = []
-
-class ExecuteResponse(BaseModel):
-    success: bool
-    rows: Optional[List[Dict]] = None
-    rowcount: Optional[int] = None
-    lastrowid: Optional[int] = None
-    error: Optional[str] = None
-
-@app.post("/connect")
-def connect():
-    conn_id = str(uuid.uuid4())
-    db_path = os.path.join(os.path.dirname(__file__), 'hawaa_data.db')
-    os.makedirs(os.path.dirname(db_path), exist_ok=True)
-    conn = sqlite3.connect(db_path, isolation_level=None)
+def init_db():
+    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+    conn = sqlite3.connect(DB_PATH, isolation_level=None)
     conn.row_factory = sqlite3.Row
-    connections[conn_id] = conn
-    return {"connection_id": conn_id}
+    conn.close()
 
-@app.post("/disconnect")
-def disconnect(conn_id: str):
-    if conn_id in connections:
-        connections[conn_id].close()
-        del connections[conn_id]
-    return {"status": "ok"}
+class HawaaHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path == '/health':
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.end_headers()
+            self.wfile.write(json.dumps({"status": "alive"}).encode())
+        else:
+            self.send_response(404)
+            self.end_headers()
 
-@app.post("/execute", response_model=ExecuteResponse)
-def execute(req: ExecuteRequest):
-    if req.connection_id not in connections:
-        raise HTTPException(status_code=404, detail="Connection not found")
-    conn = connections[req.connection_id]
+    def do_POST(self):
+        try:
+            content_length = int(self.headers.get('Content-Length', 0))
+            body = self.rfile.read(content_length).decode('utf-8')
+            data = json.loads(body) if body else {}
+        except:
+            data = {}
+
+        path = self.path
+        if path == '/connect':
+            conn_id = str(uuid.uuid4())
+            conn = sqlite3.connect(DB_PATH, isolation_level=None)
+            conn.row_factory = sqlite3.Row
+            connections[conn_id] = conn
+            self._send_json({"connection_id": conn_id})
+
+        elif path == '/disconnect':
+            conn_id = data.get('conn_id') or self._get_param('conn_id')
+            if conn_id in connections:
+                connections[conn_id].close()
+                del connections[conn_id]
+            self._send_json({"status": "ok"})
+
+        elif path == '/execute':
+            conn_id = data.get('connection_id')
+            sql = data.get('sql')
+            params = data.get('params', [])
+            if conn_id not in connections:
+                self._send_error("Connection not found", 404)
+                return
+            conn = connections[conn_id]
+            try:
+                cursor = conn.execute(sql, params)
+                rows = None
+                if sql.strip().upper().startswith("SELECT"):
+                    rows = [dict(row) for row in cursor.fetchall()]
+                self._send_json({
+                    "success": True,
+                    "rows": rows,
+                    "rowcount": cursor.rowcount,
+                    "lastrowid": cursor.lastrowid
+                })
+            except Exception as e:
+                self._send_json({"success": False, "error": str(e)})
+
+        elif path == '/commit':
+            conn_id = data.get('conn_id') or self._get_param('conn_id')
+            if conn_id in connections:
+                connections[conn_id].commit()
+            self._send_json({"status": "ok"})
+
+        elif path == '/rollback':
+            conn_id = data.get('conn_id') or self._get_param('conn_id')
+            if conn_id in connections:
+                connections[conn_id].rollback()
+            self._send_json({"status": "ok"})
+
+        else:
+            self.send_response(404)
+            self.end_headers()
+
+    def _get_param(self, key):
+        query = urllib.parse.urlparse(self.path).query
+        params = urllib.parse.parse_qs(query)
+        return params.get(key, [None])[0]
+
+    def _send_json(self, data):
+        self.send_response(200)
+        self.send_header('Content-Type', 'application/json')
+        self.end_headers()
+        self.wfile.write(json.dumps(data).encode())
+
+    def _send_error(self, msg, code=500):
+        self.send_response(code)
+        self.send_header('Content-Type', 'application/json')
+        self.end_headers()
+        self.wfile.write(json.dumps({"error": msg}).encode())
+
+    def log_message(self, format, *args):
+        pass
+
+def create_server():
+    init_db()
+    server = HTTPServer(('0.0.0.0', 8000), HawaaHandler)
+    return server
+
+if __name__ == '__main__':
+    server = create_server()
+    print("✅ خادم Hawaa يعمل على http://0.0.0.0:8000")
     try:
-        cursor = conn.execute(req.sql, req.params)
-        rows = None
-        if req.sql.strip().upper().startswith("SELECT"):
-            rows = [dict(row) for row in cursor.fetchall()]
-        return ExecuteResponse(
-            success=True,
-            rows=rows,
-            rowcount=cursor.rowcount,
-            lastrowid=cursor.lastrowid
-        )
-    except Exception as e:
-        return ExecuteResponse(success=False, error=str(e))
-
-@app.post("/commit")
-def commit(conn_id: str):
-    if conn_id not in connections:
-        raise HTTPException(status_code=404, detail="Connection not found")
-    connections[conn_id].commit()
-    return {"status": "ok"}
-
-@app.post("/rollback")
-def rollback(conn_id: str):
-    if conn_id not in connections:
-        raise HTTPException(status_code=404, detail="Connection not found")
-    connections[conn_id].rollback()
-    return {"status": "ok"}
-
-@app.get("/health")
-def health():
-    return {"status": "alive"}
-
-if __name__ == "__main__":
-    from multiprocessing import freeze_support
-    freeze_support()
-    uvicorn.run(app, host="0.0.0.0", port=8000, log_level="warning")
+        server.serve_forever()
+    except KeyboardInterrupt:
+        print("\n🛑 إيقاف الخادم...")
+        server.shutdown()
