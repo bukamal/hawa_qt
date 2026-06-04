@@ -1,5 +1,5 @@
-from PyQt5.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLineEdit, QHeaderView
-from PyQt5.QtCore import Qt, pyqtSignal
+from PyQt5.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLineEdit, QHeaderView, QMessageBox, QComboBox, QDateEdit, QLabel, QDialog, QFormLayout, QDialogButtonBox
+from PyQt5.QtCore import Qt, QDate, pyqtSignal
 from database import ExpenseRepository
 from i18n.translator import translate
 from views.custom_table_view import CustomTableView
@@ -8,17 +8,21 @@ from views.dialogs.add_edit_expense_dialog import AddEditExpenseDialog
 from views.dialogs.company_details_dialog import CompanyDetailsDialog
 from currency import currency
 from collections import defaultdict
+from datetime import datetime
+import webbrowser
+import tempfile
+import os
 
 class AccountsWidget(QWidget):
     data_changed = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setLayoutDirection(Qt.RightToLeft)
         layout = QVBoxLayout(self)
         layout.setSpacing(12)
         layout.setContentsMargins(12, 12, 12, 12)
 
+        # شريط البحث والإضافة
         search_layout = QHBoxLayout()
         self.search_edit = QLineEdit()
         self.search_edit.setPlaceholderText(translate('search'))
@@ -29,18 +33,19 @@ class AccountsWidget(QWidget):
         search_layout.addWidget(add_btn)
         layout.addLayout(search_layout)
 
+        # أزرار الطباعة والتقارير
         btn_layout = QHBoxLayout()
-        self.print_btn = QPushButton("🖨️ طباعة التقرير")
+        self.print_btn = QPushButton("🖨️ " + translate('print_report'))
         self.print_btn.clicked.connect(self.print_report)
-        self.pdf_btn = QPushButton("📄 حفظ PDF")
-        self.pdf_btn.clicked.connect(self.export_pdf)
+        self.custom_report_btn = QPushButton("📊 تقرير مخصص لشركة")
+        self.custom_report_btn.clicked.connect(self.show_custom_report_dialog)
         btn_layout.addWidget(self.print_btn)
-        btn_layout.addWidget(self.pdf_btn)
+        btn_layout.addWidget(self.custom_report_btn)
         btn_layout.addStretch()
         layout.addLayout(btn_layout)
 
+        # الجدول
         self.table = CustomTableView()
-        self.table.setLayoutDirection(Qt.RightToLeft)
         self.table.setSelectionBehavior(CustomTableView.SelectRows)
         self.table.doubleClicked.connect(self.show_details)
         layout.addWidget(self.table)
@@ -98,8 +103,7 @@ class AccountsWidget(QWidget):
         from printing.print_manager import PrintManager
         model = self.table.model()
         if not model or model.rowCount() == 0:
-            from PyQt5.QtWidgets import QMessageBox
-            QMessageBox.warning(self, "تنبيه", "لا توجد بيانات للطباعة")
+            QMessageBox.warning(self, translate('warning'), translate('no_data_for_print'))
             return
         headers = [model.headerData(i, Qt.Horizontal, Qt.DisplayRole) for i in range(model.columnCount())]
         data = []
@@ -110,22 +114,317 @@ class AccountsWidget(QWidget):
                 value = model.data(idx, Qt.DisplayRole)
                 row_data.append(str(value) if value else '')
             data.append(row_data)
-        PrintManager.print_report("تقرير حسابات الشركات", headers, data, self)
+        html = self.generate_html_general_report("تقرير حسابات الشركات", headers, data)
+        fd, temp = tempfile.mkstemp(suffix='.html', prefix='hawaa_report_')
+        os.close(fd)
+        with open(temp, 'w', encoding='utf-8') as f:
+            f.write(html)
+        webbrowser.open(f'file://{temp}')
+        QMessageBox.information(self, translate('print_report'), translate('report_opened_in_browser'))
 
-    def export_pdf(self):
-        from printing.print_manager import PrintManager
-        model = self.table.model()
-        if not model or model.rowCount() == 0:
-            from PyQt5.QtWidgets import QMessageBox
-            QMessageBox.warning(self, "تنبيه", "لا توجد بيانات للطباعة")
+    def generate_html_general_report(self, title, headers, data):
+        now = datetime.now()
+        date_str = now.strftime("%Y-%m-%d %H:%M:%S")
+        html = f"""<!DOCTYPE html>
+<html dir="rtl">
+<head><meta charset="UTF-8"><title>{title}</title>
+<style>
+    body {{ font-family: 'Tahoma', 'Arial', sans-serif; margin: 2cm; direction: rtl; }}
+    h1 {{ text-align: center; color: #2c3e50; }}
+    table {{ width: 100%; border-collapse: collapse; margin-top: 20px; }}
+    th, td {{ border: 1px solid #ccc; padding: 8px; text-align: center; }}
+    th {{ background: #2c3e50; color: white; }}
+    .footer {{ text-align: center; margin-top: 30px; font-size: 12px; color: gray; }}
+</style>
+</head>
+<body>
+<h1>{title}</h1>
+<table>
+<thead><tr>{"".join(f'<th>{h}</th>' for h in headers)}</tr></thead>
+<tbody>
+"""
+        for row in data:
+            html += "<tr>" + "".join(f"一位{cell}一位" for cell in row) + "</tr>"
+        html += f"""
+</tbody>
+</table>
+<div class="footer">تاريخ الطباعة: {date_str}<br>هوى الشام للسياحة والسفر</div>
+</body>
+</html>"""
+        return html
+
+    def show_custom_report_dialog(self):
+        """نافذة لتحديد شركة وفترة زمنية لطباعة تقرير مفصل"""
+        dialog = QDialog(self)
+        dialog.setWindowTitle("تقرير مخصص لشركة")
+        dialog.setLayoutDirection(Qt.RightToLeft)
+        dialog.resize(450, 300)
+        layout = QVBoxLayout(dialog)
+
+        form = QFormLayout()
+
+        # قائمة الشركات
+        repo = ExpenseRepository()
+        expenses = repo.get_all(convert_to_display=False)
+        companies = sorted(set(e['company_name'] for e in expenses))
+        self.company_combo = QComboBox()
+        self.company_combo.addItems(companies)
+        form.addRow("الشركة:", self.company_combo)
+
+        # نوع الفترة
+        self.period_type = QComboBox()
+        self.period_type.addItems(["شهر محدد", "سنة محددة", "فترة مخصصة"])
+        self.period_type.currentIndexChanged.connect(self.on_period_type_changed)
+        form.addRow("الفترة:", self.period_type)
+
+        self.year_combo = QComboBox()
+        current_year = datetime.now().year
+        for y in range(current_year - 5, current_year + 2):
+            self.year_combo.addItem(str(y))
+        form.addRow("السنة:", self.year_combo)
+
+        self.month_combo = QComboBox()
+        self.month_combo.addItems(["يناير", "فبراير", "مارس", "أبريل", "مايو", "يونيو",
+                                   "يوليو", "أغسطس", "سبتمبر", "أكتوبر", "نوفمبر", "ديسمبر"])
+        form.addRow("الشهر:", self.month_combo)
+
+        self.start_date = QDateEdit()
+        self.start_date.setDate(QDate.currentDate().addDays(-30))
+        self.start_date.setCalendarPopup(True)
+        form.addRow("من تاريخ:", self.start_date)
+
+        self.end_date = QDateEdit()
+        self.end_date.setDate(QDate.currentDate())
+        self.end_date.setCalendarPopup(True)
+        form.addRow("إلى تاريخ:", self.end_date)
+
+        layout.addLayout(form)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(lambda: self.generate_company_report(dialog))
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+
+        self.on_period_type_changed()
+        dialog.exec()
+
+    def on_period_type_changed(self):
+        period = self.period_type.currentIndex()
+        self.year_combo.setVisible(period in (0, 1))
+        self.month_combo.setVisible(period == 0)
+        self.start_date.setVisible(period == 2)
+        self.end_date.setVisible(period == 2)
+
+    def get_date_range(self):
+        period = self.period_type.currentIndex()
+        if period == 0:
+            year = int(self.year_combo.currentText())
+            month = self.month_combo.currentIndex() + 1
+            start = QDate(year, month, 1)
+            end = QDate(year, month, start.daysInMonth())
+        elif period == 1:
+            year = int(self.year_combo.currentText())
+            start = QDate(year, 1, 1)
+            end = QDate(year, 12, 31)
+        else:
+            start = self.start_date.date()
+            end = self.end_date.date()
+        return start.toString("yyyy-MM-dd"), end.toString("yyyy-MM-dd")
+
+    def generate_company_report(self, dialog):
+        company = self.company_combo.currentText()
+        start_date, end_date = self.get_date_range()
+
+        repo = ExpenseRepository()
+        records = repo.get_by_company(company, convert_to_display=False)
+        # تصفية حسب الفترة
+        filtered = [r for r in records if start_date <= r['date'] <= end_date]
+        if not filtered:
+            QMessageBox.warning(self, "تنبيه", "لا توجد بيانات لهذه الشركة خلال الفترة المحددة")
             return
-        headers = [model.headerData(i, Qt.Horizontal, Qt.DisplayRole) for i in range(model.columnCount())]
-        data = []
-        for row in range(model.rowCount()):
-            row_data = []
-            for col in range(model.columnCount()):
-                idx = model.index(row, col)
-                value = model.data(idx, Qt.DisplayRole)
-                row_data.append(str(value) if value else '')
-            data.append(row_data)
-        PrintManager.save_as_pdf("تقرير حسابات الشركات", headers, data, self)
+        dialog.accept()
+
+        # حساب الإجماليات
+        display_curr = currency.get_display_currency()
+        total_in = 0.0
+        total_out = 0.0
+        for r in filtered:
+            amt = currency.convert(r['amount'], 'USD', display_curr)
+            if r['type'] == 'incoming':
+                total_in += amt
+            else:
+                total_out += amt
+        net = total_in - total_out
+
+        # بناء الجدول مع التراكمي
+        table_rows = ""
+        running = 0.0
+        for r in filtered:
+            original_amount = currency.convert(r['amount'], 'USD', r['currency'])
+            amount_str = currency.format_amount(original_amount, r['currency'])
+            if r['currency'] == 'USD' and not amount_str.startswith('$'):
+                amount_str = f"$ {amount_str}"
+            amt_display_val = currency.convert(r['amount'], 'USD', display_curr)
+            if r['type'] == 'incoming':
+                running += amt_display_val
+                incoming = amount_str
+                outgoing = "—"
+            else:
+                running -= amt_display_val
+                incoming = "—"
+                outgoing = amount_str
+            running_display = currency.format_amount(running, display_curr)
+            notes = r['notes'] or '—'
+            date_display = r['date']
+            row_class = "income-row" if r['type'] == 'incoming' else "expense-row"
+            table_rows += f"""
+            <tr class="{row_class}">
+                <td class="center">{date_display}浏
+                <td class="right">{notes}浏
+                <td class="center income">{incoming}浏
+                <td class="center expense">{outgoing}浏
+                <td class="center">{running_display}浏
+            </tr>
+"""
+
+        html = f"""<!DOCTYPE html>
+<html dir="rtl" lang="ar">
+<head>
+    <meta charset="UTF-8">
+    <title>تقرير شركة {company}</title>
+    <style>
+        body {{
+            font-family: 'Tahoma', 'Arial', sans-serif;
+            margin: 1.5cm;
+            direction: rtl;
+            background: white;
+            line-height: 1.4;
+        }}
+        h1 {{
+            color: #2c3e50;
+            text-align: center;
+            border-bottom: 2px solid #3498db;
+            padding-bottom: 8px;
+            margin-bottom: 10px;
+        }}
+        .company-info {{
+            text-align: center;
+            margin-bottom: 20px;
+            color: #2c3e50;
+            font-size: 13px;
+            border: 1px solid #ddd;
+            padding: 8px;
+            background: #f9f9f9;
+        }}
+        .period-info {{
+            text-align: center;
+            margin-bottom: 20px;
+            font-size: 14px;
+            color: #555;
+        }}
+        .summary {{
+            display: flex;
+            justify-content: space-around;
+            align-items: center;
+            margin: 20px 0;
+            gap: 20px;
+            flex-wrap: wrap;
+        }}
+        .summary-item {{
+            text-align: center;
+            flex: 1;
+            background: #f8f9fa;
+            padding: 10px;
+            border-radius: 8px;
+        }}
+        .summary-label {{
+            font-size: 16px;
+            font-weight: bold;
+            margin-bottom: 5px;
+        }}
+        .summary-amount {{
+            font-size: 22px;
+            font-weight: 800;
+        }}
+        .table {{
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+        }}
+        .table th {{
+            background: #2c3e50;
+            color: white;
+            padding: 10px;
+            border: 1px solid #1a252f;
+            text-align: center;
+        }}
+        .table td {{
+            border: 1px solid #bdc3c7;
+            padding: 8px;
+        }}
+        .income-row td {{
+            background-color: #d4edda;
+        }}
+        .expense-row td {{
+            background-color: #f8d7da;
+        }}
+        .income {{ color: #28a745; font-weight: bold; }}
+        .expense {{ color: #dc3545; font-weight: bold; }}
+        .footer {{
+            text-align: center;
+            margin-top: 30px;
+            font-size: 11px;
+            color: #6c757d;
+            border-top: 1px solid #dee2e6;
+            padding-top: 10px;
+        }}
+        .center {{ text-align: center; }}
+        .right {{ text-align: right; }}
+    </style>
+</head>
+<body>
+    <h1>📊 تقرير حسابات شركة: {company}</h1>
+    <div class="period-info">الفترة: {start_date} إلى {end_date}</div>
+
+    <div class="summary">
+        <div class="summary-item">
+            <div class="summary-label">صادر (له)</div>
+            <div class="summary-amount" style="color:#dc3545;">{currency.format_amount(total_out, display_curr)}</div>
+        </div>
+        <div class="summary-item">
+            <div class="summary-label">وارد (لنا)</div>
+            <div class="summary-amount" style="color:#28a745;">{currency.format_amount(total_in, display_curr)}</div>
+        </div>
+        <div class="summary-item">
+            <div class="summary-label">صافي الرصيد</div>
+            <div class="summary-amount" style="color:#007bff;">{currency.format_amount(net, display_curr)}</div>
+        </div>
+    </div>
+
+    <table class="table">
+        <thead>
+            <tr>
+                <th>التاريخ</th>
+                <th>ملاحظات</th>
+                <th>لنا (وارد)</th>
+                <th>له (صادر)</th>
+                <th>التراكمي</th>
+            </tr>
+        </thead>
+        <tbody>
+            {table_rows}
+        </tbody>
+    </table>
+
+    <div class="footer">
+        نظام هوى الشام للسياحة والسفر<br>
+        تاريخ الطباعة: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
+    </div>
+</body>
+</html>"""
+        fd, temp = tempfile.mkstemp(suffix='.html', prefix='hawaa_report_')
+        os.close(fd)
+        with open(temp, 'w', encoding='utf-8') as f:
+            f.write(html)
+        webbrowser.open(f'file://{temp}')
+        QMessageBox.information(self, "طباعة التقرير", "تم فتح التقرير في المتصفح للطباعة.")

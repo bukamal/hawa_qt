@@ -157,7 +157,8 @@ class CompanyDetailsDialog(CenteredDialog):
         bad = ['\u200e', '\u200f', '\ufeff', '\u202a', '\u202b', '\u202c', '\u202d', '\u202e', '浏', '�']
         for ch in bad:
             text = text.replace(ch, '')
-        text = re.sub(r'[^\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFFa-zA-Z0-9\s\-\.\,\:\;\(\)\/\+%]', '', text)
+        # Allow currency symbols and Arabic/English letters
+        text = re.sub(r'[^\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFFa-zA-Z0-9\s\-\.\,\:\;\(\)\/\+%\$]', '', text)
         text = re.sub(r'\s+', ' ', text)
         return text.strip()
 
@@ -177,6 +178,7 @@ class CompanyDetailsDialog(CenteredDialog):
                 total_out += amt
         net = total_in - total_out
 
+        # Build table rows with order: التاريخ, الملاحظات, لنا, له, التراكمي
         table_rows = ""
         running = 0.0
         for r in self.records:
@@ -199,12 +201,12 @@ class CompanyDetailsDialog(CenteredDialog):
             row_class = "income-row" if r['type'] == 'incoming' else "expense-row"
             table_rows += f"""
             <tr class="{row_class}">
-                <td class="center">{self.clean_text(running_display)}浏
-                <td class="center expense">{self.clean_text(outgoing)}浏
-                <td class="center income">{self.clean_text(incoming)}浏
-                <td class="right">{notes}浏
                 <td class="center">{self.clean_text(date_display)}浏
-            </tr>
+                <td class="right">{notes}浏
+                <td class="center income">{self.clean_text(incoming)}浏
+                <td class="center expense">{self.clean_text(outgoing)}浏
+                <td class="center">{self.clean_text(running_display)}浏
+            <tr>
 """
 
         html = f"""<!DOCTYPE html>
@@ -317,11 +319,11 @@ class CompanyDetailsDialog(CenteredDialog):
     <table class="table">
         <thead>
             <tr>
-                <th>{translate('cumulative')}</th>
-                <th>له (صادر)</th>
-                <th>لنا (وارد)</th>
-                <th>{translate('notes')}</th>
                 <th>{translate('date')}</th>
+                <th>{translate('notes')}</th>
+                <th>{translate('incoming')}</th>
+                <th>{translate('outgoing')}</th>
+                <th>{translate('cumulative')}</th>
             </tr>
         </thead>
         <tbody>
@@ -348,6 +350,5 @@ class CompanyDetailsDialog(CenteredDialog):
         with open(temp_html, 'w', encoding='utf-8') as f:
             f.write(html)
 
-        # فتح في المتصفح (أبسط وأضمن طريقة للعربية والتنسيق)
         webbrowser.open(f'file://{temp_html}')
         QMessageBox.information(self, translate('print_report'), translate('report_opened_in_browser'))

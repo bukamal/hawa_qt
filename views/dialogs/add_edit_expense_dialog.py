@@ -1,28 +1,26 @@
 from PyQt5.QtWidgets import QFormLayout, QLineEdit, QDoubleSpinBox, QDateEdit, QTextEdit, QComboBox, QPushButton, QHBoxLayout, QVBoxLayout, QMessageBox, QLabel
-from PyQt5.QtCore import QDate, QSettings, Qt
+from PyQt5.QtCore import QDate, QSettings
 from database import ExpenseRepository
 from auth.session import UserSession
 from i18n.translator import translate
 from views.centered_dialog import CenteredDialog
 from currency import currency
-from utils import apply_auto_select_to_widget
 
 class AddEditExpenseDialog(CenteredDialog):
     def __init__(self, parent=None, expense=None, company_name=None):
         super().__init__(parent)
-        self.setLayoutDirection(Qt.LeftToRight)
         self.expense = expense
         self.predefined_company = company_name
         self.setWindowTitle(translate('add') if not expense else translate('edit'))
-        self.resize(550, 520)
+        self.resize(550, 550)
         self.settings = QSettings("Hawaa", "Accounting")
         layout = QVBoxLayout(self.content_widget)
         layout.setSpacing(16)
         layout.setContentsMargins(20,20,20,20)
         
         form = QFormLayout()
-        form.setLabelAlignment(Qt.AlignLeft)
         
+        # حقل اسم الشركة (يُخفى إذا تم تمرير company_name)
         self.company_edit = QLineEdit()
         if self.predefined_company:
             self.company_edit.setText(self.predefined_company)
@@ -32,8 +30,8 @@ class AddEditExpenseDialog(CenteredDialog):
             self.company_edit.setText(expense['company_name'])
         form.addRow(translate('company_name')+":", self.company_edit)
         
+        # حقل المبلغ مع العملة
         amount_layout = QHBoxLayout()
-        amount_layout.setDirection(QHBoxLayout.LeftToRight)
         self.amount_spin = QDoubleSpinBox()
         self.amount_spin.setRange(0.01, 999999999)
         self.amount_spin.setDecimals(2)
@@ -42,22 +40,16 @@ class AddEditExpenseDialog(CenteredDialog):
         self.currency_combo = QComboBox()
         currencies = ["USD", "SAR", "SYP", "EUR", "GBP", "AED", "QAR", "KWD", "OMR"]
         self.currency_combo.addItems(currencies)
-        
         if expense:
-            if 'original_amount' in expense:
-                self.amount_spin.setValue(expense['original_amount'])
-            else:
-                original_amount = currency.convert(expense['amount'], 'USD', expense['currency'])
-                self.amount_spin.setValue(original_amount)
-            self.currency_combo.setCurrentText(expense['currency'])
+            curr = expense.get('currency', 'SAR')
+            idx = currencies.index(curr) if curr in currencies else 0
+            self.currency_combo.setCurrentIndex(idx)
         else:
             last_currency = self.settings.value("last_used_currency", currency.get_display_currency())
             if last_currency in currencies:
                 self.currency_combo.setCurrentText(last_currency)
             else:
                 self.currency_combo.setCurrentText(currency.get_display_currency())
-            self.amount_spin.setValue(0.0)
-        
         amount_layout.addWidget(self.currency_combo)
         form.addRow(translate('amount')+":", amount_layout)
         
@@ -89,7 +81,6 @@ class AddEditExpenseDialog(CenteredDialog):
         layout.addLayout(form)
         
         btns = QHBoxLayout()
-        btns.setDirection(QHBoxLayout.LeftToRight)
         save_btn = QPushButton(translate('save'))
         save_btn.clicked.connect(self.save)
         cancel_btn = QPushButton(translate('cancel'))
@@ -101,25 +92,24 @@ class AddEditExpenseDialog(CenteredDialog):
         self.amount_spin.valueChanged.connect(self.update_labels)
         self.currency_combo.currentTextChanged.connect(self.update_labels)
         self.update_labels()
-        
-        # تطبيق التحديد التلقائي على جميع حقول الإدخال في هذا الحوار
-        apply_auto_select_to_widget(self)
     
     def update_labels(self):
         amount = self.amount_spin.value()
         curr = self.currency_combo.currentText()
         display_curr = currency.get_display_currency()
+        # تحديث التحويل
         if curr != display_curr:
             converted = currency.convert(amount, curr, display_curr)
             self.conversion_label.setText(f"≈ {currency.format_amount(converted, display_curr)}")
         else:
             self.conversion_label.setText("")
+        # تحديث سعر الصرف الحالي مقابل الدولار
         rate_to_usd = currency.get_rate_to_usd(curr)
         if curr == 'USD':
             self.rate_label.setText(f"سعر الصرف: 1 {curr} = 1 USD (العملة الأساسية)")
         else:
             usd_per_curr = 1.0 / rate_to_usd
-            self.rate_label.setText(f"سعر الصرف: 1 {curr} = {usd_per_curr:.4f} USD | 1 USD = {rate_to_usd:.4f} {curr}")
+            self.rate_label.setText(f"سعر الصرف الحالي: 1 {curr} = {usd_per_curr:.4f} USD | 1 USD = {rate_to_usd:.4f} {curr}")
     
     def save(self):
         if self.predefined_company:
