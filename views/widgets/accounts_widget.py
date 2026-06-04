@@ -7,6 +7,7 @@ from models.table_models import GenericTableModel
 from views.dialogs.add_edit_expense_dialog import AddEditExpenseDialog
 from views.dialogs.company_details_dialog import CompanyDetailsDialog
 from currency import currency
+from auth.session import UserSession
 from collections import defaultdict
 from datetime import datetime
 import webbrowser
@@ -22,16 +23,22 @@ class AccountsWidget(QWidget):
         layout.setSpacing(12)
         layout.setContentsMargins(12, 12, 12, 12)
 
+        # شريط البحث والإضافة
         search_layout = QHBoxLayout()
         self.search_edit = QLineEdit()
         self.search_edit.setPlaceholderText(translate('search'))
         self.search_edit.textChanged.connect(self.refresh_table)
         search_layout.addWidget(self.search_edit)
-        add_btn = QPushButton("➕ " + translate('add'))
-        add_btn.clicked.connect(self.add_record)
-        search_layout.addWidget(add_btn)
+        
+        # زر الإضافة: يظهر فقط للمستخدمين الذين ليسوا مشاهِدين (admin أو user)
+        self.add_btn = QPushButton("➕ " + translate('add'))
+        self.add_btn.clicked.connect(self.add_record)
+        if not UserSession.is_admin() and UserSession.get_current().get('role') == 'viewer':
+            self.add_btn.setVisible(False)
+        search_layout.addWidget(self.add_btn)
         layout.addLayout(search_layout)
 
+        # أزرار الطباعة والتقارير
         btn_layout = QHBoxLayout()
         self.print_btn = QPushButton("🖨️ " + translate('print_report'))
         self.print_btn.clicked.connect(self.print_report)
@@ -42,6 +49,7 @@ class AccountsWidget(QWidget):
         btn_layout.addStretch()
         layout.addLayout(btn_layout)
 
+        # الجدول
         self.table = CustomTableView()
         self.table.setSelectionBehavior(CustomTableView.SelectRows)
         self.table.doubleClicked.connect(self.show_details)
@@ -51,13 +59,13 @@ class AccountsWidget(QWidget):
 
     def refresh_table(self):
         repo = ExpenseRepository()
-        expenses = repo.get_all(convert_to_display=False)  # amount بالدولار الثابت
+        expenses = repo.get_all(convert_to_display=False)
         search = self.search_edit.text().strip().lower()
         groups = defaultdict(lambda: {'incoming': 0.0, 'outgoing': 0.0})
         for e in expenses:
             if search and search not in e['company_name'].lower():
                 continue
-            groups[e['company_name']][e['type']] += e['amount']  # بالدولار
+            groups[e['company_name']][e['type']] += e['amount']
         
         display_currency = currency.get_display_currency()
         data = []
@@ -82,6 +90,10 @@ class AccountsWidget(QWidget):
         self.table.refresh_style()
 
     def add_record(self):
+        # حماية إضافية: منع المشاهد من الإضافة
+        if UserSession.get_current().get('role') == 'viewer':
+            QMessageBox.warning(self, translate('warning'), "ليس لديك صلاحية لإضافة قيود")
+            return
         dialog = AddEditExpenseDialog(self)
         if dialog.exec():
             self.refresh_table()
@@ -141,7 +153,7 @@ class AccountsWidget(QWidget):
 <body>
 <h1>{title}</h1>
 <table>
-<thead><tr>{"".join(f'<th>{h}</th>' for h in headers)}</thead>
+<thead><tr>{"".join(f'<th>{h}</th>' for h in headers)}</tr></thead>
 <tbody>
 """
         for row in data:
@@ -268,7 +280,7 @@ class AccountsWidget(QWidget):
                 <td class="center">{incoming_str}</td>
                 <td class="center">{outgoing_str}</td>
                 <td class="center">{running_str}</td>
-            </tr>
+             </tr>
 """
         html = f"""<!DOCTYPE html>
 <html dir="rtl" lang="ar">

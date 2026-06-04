@@ -1,4 +1,4 @@
-from PyQt5.QtWidgets import QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QMessageBox, QHeaderView
+from PyQt5.QtWidgets import QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QMessageBox, QHeaderView, QFileDialog
 from PyQt5.QtCore import Qt
 from database import ExpenseRepository
 from auth.session import UserSession
@@ -33,18 +33,29 @@ class CompanyDetailsDialog(CenteredDialog):
         layout.addWidget(self.table)
 
         btn_layout = QHBoxLayout()
-        add_btn = QPushButton("➕ "+translate('add'))
-        add_btn.clicked.connect(self.add_record)
-        edit_btn = QPushButton("✏️ "+translate('edit'))
-        edit_btn.clicked.connect(self.edit_record)
-        delete_btn = QPushButton("🗑 "+translate('delete'))
-        delete_btn.clicked.connect(self.delete_record)
-        print_btn = QPushButton("🖨️ طباعة / معاينة")
-        print_btn.clicked.connect(self.print_company_report)
-        btn_layout.addWidget(add_btn)
-        btn_layout.addWidget(edit_btn)
-        btn_layout.addWidget(delete_btn)
-        btn_layout.addWidget(print_btn)
+        
+        # إظهار الأزرار فقط إذا لم يكن المستخدم مشاهداً
+        is_viewer = UserSession.get_current().get('role') == 'viewer'
+        
+        self.add_btn = QPushButton("➕ "+translate('add'))
+        self.add_btn.clicked.connect(self.add_record)
+        self.add_btn.setVisible(not is_viewer)
+        
+        self.edit_btn = QPushButton("✏️ "+translate('edit'))
+        self.edit_btn.clicked.connect(self.edit_record)
+        self.edit_btn.setVisible(not is_viewer)
+        
+        self.delete_btn = QPushButton("🗑 "+translate('delete'))
+        self.delete_btn.clicked.connect(self.delete_record)
+        self.delete_btn.setVisible(not is_viewer)
+        
+        self.print_btn = QPushButton("🖨️ طباعة / معاينة")
+        self.print_btn.clicked.connect(self.print_company_report)
+        
+        btn_layout.addWidget(self.add_btn)
+        btn_layout.addWidget(self.edit_btn)
+        btn_layout.addWidget(self.delete_btn)
+        btn_layout.addWidget(self.print_btn)
         layout.addLayout(btn_layout)
 
         self.refresh()
@@ -109,6 +120,9 @@ class CompanyDetailsDialog(CenteredDialog):
         self.table.refresh_style()
 
     def add_record(self):
+        if UserSession.get_current().get('role') == 'viewer':
+            QMessageBox.warning(self, translate('warning'), "ليس لديك صلاحية لإضافة قيود")
+            return
         dialog = AddEditExpenseDialog(self, company_name=self.company_name)
         if dialog.exec():
             self.refresh()
@@ -116,6 +130,9 @@ class CompanyDetailsDialog(CenteredDialog):
                 self.parent().refresh_table()
 
     def edit_record(self):
+        if UserSession.get_current().get('role') == 'viewer':
+            QMessageBox.warning(self, translate('warning'), "ليس لديك صلاحية لتعديل القيود")
+            return
         selected = self.table.selectionModel().selectedRows()
         if not selected:
             QMessageBox.warning(self, translate('warning'), "اختر قيداً للتعديل")
@@ -135,6 +152,9 @@ class CompanyDetailsDialog(CenteredDialog):
                     self.parent().refresh_table()
 
     def delete_record(self):
+        if UserSession.get_current().get('role') == 'viewer':
+            QMessageBox.warning(self, translate('warning'), "ليس لديك صلاحية لحذف القيود")
+            return
         selected = self.table.selectionModel().selectedRows()
         if not selected:
             QMessageBox.warning(self, translate('warning'), "اختر قيداً للحذف")
@@ -195,72 +215,32 @@ class CompanyDetailsDialog(CenteredDialog):
             
             table_rows += f"""
             <tr class="{row_class}">
-                <td style="text-align: center;">{idx}</td>
-                <td style="text-align: center;">{self.clean_text(date_display)}</td>
-                <td style="text-align: right;">{notes}</td>
-                <td style="text-align: center;">{self.clean_text(incoming_str)}</td>
-                <td style="text-align: center;">{self.clean_text(outgoing_str)}</td>
-                <td style="text-align: center;">{self.clean_text(running_str)}</td>
+                <td class="center">{idx}</td>
+                <td class="center">{self.clean_text(date_display)}</td>
+                <td class="right">{notes}</td>
+                <td class="center income">{self.clean_text(incoming_str)}</td>
+                <td class="center expense">{self.clean_text(outgoing_str)}</td>
+                <td class="center">{self.clean_text(running_str)}</td>
              </tr>
 """
-        # ترتيب الأعمدة في HTML من اليمين إلى اليسار حسب الترتيب المطلوب:
-        # # , التاريخ , الملاحظات , لنا , له , التراكمي
         html = f"""<!DOCTYPE html>
 <html dir="rtl" lang="ar">
-<head>
-    <meta charset="UTF-8">
-    <title>تقرير حسابات {self.clean_text(self.company_name)}</title>
-    <style>
-        body {{
-            font-family: 'Tahoma', 'Arial', sans-serif;
-            margin: 1.5cm;
-            direction: rtl;
-            background: white;
-        }}
-        h1 {{
-            color: #2c3e50;
-            text-align: center;
-            border-bottom: 2px solid #3498db;
-            padding-bottom: 8px;
-        }}
-        .company-info {{
-            text-align: center;
-            margin-bottom: 20px;
-            color: #2c3e50;
-            border: 1px solid #ddd;
-            padding: 8px;
-            background: #f9f9f9;
-        }}
-        table {{
-            width: 100%;
-            border-collapse: collapse;
-            margin-top: 20px;
-            direction: rtl;
-        }}
-        th, td {{
-            border: 1px solid #bdc3c7;
-            padding: 8px;
-        }}
-        th {{
-            background: #2c3e50;
-            color: white;
-            text-align: center;
-        }}
-        .income-row td {{
-            background-color: #d4edda;
-        }}
-        .expense-row td {{
-            background-color: #f8d7da;
-        }}
-        .footer {{
-            text-align: center;
-            margin-top: 30px;
-            font-size: 11px;
-            color: #6c757d;
-            border-top: 1px solid #dee2e6;
-            padding-top: 10px;
-        }}
-    </style>
+<head><meta charset="UTF-8"><title>تقرير حسابات {self.clean_text(self.company_name)}</title>
+<style>
+    body {{ font-family: 'Tahoma', 'Arial', sans-serif; margin: 1.5cm; direction: rtl; background: white; }}
+    h1 {{ color: #2c3e50; text-align: center; border-bottom: 2px solid #3498db; padding-bottom: 8px; }}
+    .company-info {{ text-align: center; margin-bottom: 20px; color: #2c3e50; border: 1px solid #ddd; padding: 8px; background: #f9f9f9; }}
+    table {{ width: 100%; border-collapse: collapse; margin-top: 20px; }}
+    th {{ background: #2c3e50; color: white; padding: 10px; border: 1px solid #1a252f; text-align: center; }}
+    td {{ border: 1px solid #bdc3c7; padding: 8px; }}
+    .income-row td {{ background-color: #d4edda; }}
+    .expense-row td {{ background-color: #f8d7da; }}
+    .income {{ color: #28a745; font-weight: bold; }}
+    .expense {{ color: #dc3545; font-weight: bold; }}
+    .footer {{ text-align: center; margin-top: 30px; font-size: 11px; color: #6c757d; border-top: 1px solid #dee2e6; padding-top: 10px; }}
+    .center {{ text-align: center; }}
+    .right {{ text-align: right; }}
+</style>
 </head>
 <body>
     <h1>تفاصيل حسابات شركة: {self.clean_text(self.company_name)}</h1>
@@ -268,25 +248,11 @@ class CompanyDetailsDialog(CenteredDialog):
         <strong>{self.clean_text(company_info.get('name', 'هوى الشام للسياحة والسفر'))}</strong><br>
         {self.clean_text(company_info.get('address', ''))} | 📞 {self.clean_text(company_info.get('phone', ''))} | ✉️ {self.clean_text(company_info.get('email', ''))}
     </div>
-    <table>
-        <thead>
-            <tr>
-                <th>#</th>
-                <th>{translate('date')}</th>
-                <th>{translate('notes')}</th>
-                <th>لنا</th>
-                <th>له</th>
-                <th>{translate('cumulative')}</th>
-            </tr>
-        </thead>
-        <tbody>
-            {table_rows}
-        </tbody>
+    <table class="data-table">
+        <thead><tr><th>#</th><th>{translate('date')}</th><th>{translate('notes')}</th><th>لنا</th><th>له</th><th>{translate('cumulative')}</th></tr></thead>
+        <tbody>{table_rows}</tbody>
     </table>
-    <div class="footer">
-        نظام هوى الشام للسياحة والسفر<br>
-        {self.clean_text(date_str)} - {self.clean_text(time_str)}
-    </div>
+    <div class="footer">نظام هوى الشام للسياحة والسفر<br>{self.clean_text(date_str)} - {self.clean_text(time_str)}</div>
 </body>
 </html>"""
         return html

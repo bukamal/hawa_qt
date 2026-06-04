@@ -35,7 +35,6 @@ class MainWindow(QMainWindow):
 
         self.setup_ui()
         self.setup_sidebar()
-        # فتح تبويب الحسابات افتراضياً
         self.switch_page('accounts')
 
         self.installEventFilter(self)
@@ -112,9 +111,17 @@ class MainWindow(QMainWindow):
         self.pages = {}
         self.pages['dashboard'] = DashboardWidget(self)
         self.pages['accounts'] = AccountsWidget(self)
-        if UserSession.is_admin():
+        
+        # إخفاء تبويب المستخدمين وسجل التدقيق للمشاهد
+        user_role = UserSession.get_current().get('role') if UserSession.get_current() else 'user'
+        if user_role == 'admin':
             self.pages['users'] = UsersWidget(self)
             self.pages['audit_log'] = AuditLogWidget(self)
+        elif user_role == 'user':
+            # المستخدم العادي لا يرى هذه التبويبات
+            pass
+        # المشاهد لا يرى هذه التبويبات أيضاً
+        
         self.pages['settings'] = SettingsWidget(self)
         self.pages['accounts'].data_changed.connect(self.pages['dashboard'].refresh_needed.emit)
         self.pages['settings'].rates_changed.connect(self.pages['accounts'].refresh_table)
@@ -136,8 +143,10 @@ class MainWindow(QMainWindow):
         self.sidebar_layout.addWidget(self.logo_label)
 
         self.nav_buttons = {}
+        user_role = UserSession.get_current().get('role') if UserSession.get_current() else 'user'
+        
         pages = [('dashboard','📊',translate('dashboard')), ('accounts','📋',translate('accounts'))]
-        if UserSession.is_admin():
+        if user_role == 'admin':
             pages.append(('users','👥',translate('users')))
             pages.append(('audit_log','📜',translate('audit_log')))
         pages.append(('settings','⚙️',translate('settings')))
@@ -183,8 +192,12 @@ class MainWindow(QMainWindow):
             self.change_pwd_btn.setText("🔑")
             self.logo_label.setText("🏢")
         else:
-            texts = {'dashboard':('📊',translate('dashboard')), 'accounts':('📋',translate('accounts')),
-                     'users':('👥',translate('users')), 'audit_log':('📜',translate('audit_log')), 'settings':('⚙️',translate('settings'))}
+            user_role = UserSession.get_current().get('role') if UserSession.get_current() else 'user'
+            texts = {'dashboard':('📊',translate('dashboard')), 'accounts':('📋',translate('accounts'))}
+            if user_role == 'admin':
+                texts['users'] = ('👥',translate('users'))
+                texts['audit_log'] = ('📜',translate('audit_log'))
+            texts['settings'] = ('⚙️',translate('settings'))
             for pid,btn in self.nav_buttons.items():
                 if pid in texts:
                     icon,txt = texts[pid]
@@ -244,9 +257,12 @@ class MainWindow(QMainWindow):
         self.pages.clear()
         self.pages['dashboard'] = DashboardWidget(self)
         self.pages['accounts'] = AccountsWidget(self)
-        if UserSession.is_admin():
+        
+        user_role = UserSession.get_current().get('role') if UserSession.get_current() else 'user'
+        if user_role == 'admin':
             self.pages['users'] = UsersWidget(self)
             self.pages['audit_log'] = AuditLogWidget(self)
+        
         self.pages['settings'] = SettingsWidget(self)
         self.pages['accounts'].data_changed.connect(self.pages['dashboard'].refresh_needed.emit)
         self.pages['settings'].rates_changed.connect(self.pages['accounts'].refresh_table)
@@ -261,11 +277,14 @@ class MainWindow(QMainWindow):
             if w and w not in [self.toggle_btn, self.logo_label, self.logout_btn, self.change_pwd_btn]:
                 w.deleteLater()
         self.nav_buttons.clear()
+        
+        user_role = UserSession.get_current().get('role') if UserSession.get_current() else 'user'
         pages = [('dashboard','📊',translate('dashboard')), ('accounts','📋',translate('accounts'))]
-        if UserSession.is_admin():
+        if user_role == 'admin':
             pages.append(('users','👥',translate('users')))
             pages.append(('audit_log','📜',translate('audit_log')))
         pages.append(('settings','⚙️',translate('settings')))
+        
         for pid,icon,txt in pages:
             btn = QPushButton(f"{icon} {txt}")
             btn.setObjectName("nav_button")

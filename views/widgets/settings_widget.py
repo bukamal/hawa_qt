@@ -1,14 +1,22 @@
-from PyQt5.QtWidgets import QWidget, QVBoxLayout, QFormLayout, QSpinBox, QComboBox, QPushButton, QMessageBox, QGroupBox, QTableWidget, QTableWidgetItem, QHeaderView, QCheckBox, QLineEdit, QFileDialog, QTabWidget
-from PyQt5.QtCore import Qt, pyqtSignal
+from PyQt5.QtWidgets import (
+    QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QSpinBox, QComboBox,
+    QPushButton, QMessageBox, QGroupBox, QTableWidget, QTableWidgetItem,
+    QHeaderView, QCheckBox, QLineEdit, QFileDialog, QTabWidget, QLabel
+)
+from PyQt5.QtCore import Qt, pyqtSignal, QSettings, QTimer
 from database import SettingsRepository
 from currency import currency
 from i18n.translator import translate, set_language
 from theme_manager import ThemeManager
 from auth.session import UserSession
 from config import get_company_info, save_company_info
+import os
+import shutil
+import datetime
 
 class SettingsWidget(QWidget):
     rates_changed = pyqtSignal()
+    backup_settings_changed = pyqtSignal()  # إشارة لتحديث النسخ الاحتياطي الدوري
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -18,108 +26,128 @@ class SettingsWidget(QWidget):
         layout.setContentsMargins(15, 15, 15, 15)
         self.repo = SettingsRepository()
 
-        tabs = QTabWidget()
-        tabs.setLayoutDirection(Qt.RightToLeft)
-        tabs.setDocumentMode(True)
-        tabs.setTabPosition(QTabWidget.North)
+        self.tabs = QTabWidget()
+        self.tabs.setLayoutDirection(Qt.RightToLeft)
+        self.tabs.setDocumentMode(True)
+        self.tabs.setTabPosition(QTabWidget.North)
 
-        currency_tab = QWidget()
-        currency_tab.setLayoutDirection(Qt.RightToLeft)
-        currency_layout = QVBoxLayout(currency_tab)
-        currency_layout.setSpacing(20)
-        currency_layout.setContentsMargins(15, 15, 15, 15)
+        self.tabs.addTab(self.create_currency_tab(), "💰 العملات")
+        self.tabs.addTab(self.create_rates_tab(), "💱 أسعار الصرف")
+        self.tabs.addTab(self.create_company_tab(), "🏢 الشركة")
+        self.tabs.addTab(self.create_lang_theme_tab(), "🌐 اللغة والمظهر")
+        self.tabs.addTab(self.create_network_tab(), "🌐 الشبكة")
+        self.tabs.addTab(self.create_backup_tab(), "🔄 النسخ الاحتياطي والصيانة")
 
-        currency_group = QGroupBox("إعدادات العملات")
-        currency_form = QFormLayout()
-        currency_form.setLabelAlignment(Qt.AlignRight)
-        currency_form.setSpacing(12)
+        layout.addWidget(self.tabs)
+        self.load_rates_table()
+
+    # ---------- تبويب العملات ----------
+    def create_currency_tab(self):
+        tab = QWidget()
+        tab.setLayoutDirection(Qt.RightToLeft)
+        layout = QVBoxLayout(tab)
+        group = QGroupBox("إعدادات العملات")
+        form = QFormLayout()
+        form.setLabelAlignment(Qt.AlignRight)
+
         self.base_curr_combo = QComboBox()
         self.base_curr_combo.addItems(["USD", "SAR", "SYP", "EUR", "GBP", "AED", "QAR", "KWD", "OMR"])
         self.base_curr_combo.setCurrentText(currency.get_base_currency())
-        currency_form.addRow("العملة الأساسية (للتخزين):", self.base_curr_combo)
+        form.addRow("العملة الأساسية (للتخزين):", self.base_curr_combo)
+
         self.display_curr_combo = QComboBox()
         self.display_curr_combo.addItems(["USD", "SAR", "SYP", "EUR", "GBP", "AED", "QAR", "KWD", "OMR"])
         self.display_curr_combo.setCurrentText(currency.get_display_currency())
-        currency_form.addRow("العملة المعروضة:", self.display_curr_combo)
+        form.addRow("العملة المعروضة:", self.display_curr_combo)
+
         self.decimals_spin = QSpinBox()
         self.decimals_spin.setRange(0, 2)
         self.decimals_spin.setValue(int(self.repo.get('currency_decimals', '2')))
-        currency_form.addRow("الخانات العشرية:", self.decimals_spin)
+        form.addRow("الخانات العشرية:", self.decimals_spin)
+
         self.format_combo = QComboBox()
         self.format_combo.addItems(["غربية", "شرقية"])
         current = self.repo.get('number_format', 'western')
         self.format_combo.setCurrentIndex(0 if current == 'western' else 1)
-        currency_form.addRow("تنسيق الأرقام:", self.format_combo)
+        form.addRow("تنسيق الأرقام:", self.format_combo)
+
         self.abbreviate_check = QCheckBox("اختصار الأعداد الكبيرة (K, M)")
         self.abbreviate_check.setChecked(currency.abbreviate_numbers())
-        currency_form.addRow(self.abbreviate_check)
+        form.addRow(self.abbreviate_check)
+
         save_currency = QPushButton("حفظ إعدادات العملة")
         save_currency.clicked.connect(self.save_currency_settings)
-        currency_form.addRow(save_currency)
-        currency_group.setLayout(currency_form)
-        currency_layout.addWidget(currency_group)
-        currency_layout.addStretch()
-        tabs.addTab(currency_tab, "💰 العملات")
+        form.addRow(save_currency)
 
-        rates_tab = QWidget()
-        rates_tab.setLayoutDirection(Qt.RightToLeft)
-        rates_layout = QVBoxLayout(rates_tab)
-        rates_layout.setSpacing(15)
-        rates_layout.setContentsMargins(15, 15, 15, 15)
+        group.setLayout(form)
+        layout.addWidget(group)
+        layout.addStretch()
+        return tab
 
-        rates_group = QGroupBox("أسعار الصرف (1 دولار = ?)")
-        rates_inner_layout = QVBoxLayout()
+    # ---------- تبويب أسعار الصرف ----------
+    def create_rates_tab(self):
+        tab = QWidget()
+        tab.setLayoutDirection(Qt.RightToLeft)
+        layout = QVBoxLayout(tab)
+        group = QGroupBox("أسعار الصرف (1 دولار = ?)")
+        inner = QVBoxLayout()
         self.rates_table = QTableWidget()
-        self.rates_table.setLayoutDirection(Qt.RightToLeft)
         self.rates_table.setColumnCount(3)
         self.rates_table.setHorizontalHeaderLabels(["العملة", "السعر", "آخر تحديث"])
         self.rates_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        rates_inner_layout.addWidget(self.rates_table)
-        refresh_rates_btn = QPushButton("تحديث الأسعار من الإنترنت")
-        refresh_rates_btn.clicked.connect(self.fetch_online_rates)
-        rates_inner_layout.addWidget(refresh_rates_btn)
-        rates_group.setLayout(rates_inner_layout)
-        rates_layout.addWidget(rates_group)
-        rates_layout.addStretch()
-        tabs.addTab(rates_tab, "💱 أسعار الصرف")
+        inner.addWidget(self.rates_table)
 
-        company_tab = QWidget()
-        company_tab.setLayoutDirection(Qt.RightToLeft)
-        company_layout = QVBoxLayout(company_tab)
-        company_layout.setSpacing(15)
-        company_layout.setContentsMargins(15, 15, 15, 15)
+        refresh_btn = QPushButton("تحديث الأسعار من الإنترنت")
+        refresh_btn.clicked.connect(self.fetch_online_rates)
+        inner.addWidget(refresh_btn)
 
-        company_group = QGroupBox("معلومات الشركة للطباعة")
-        company_form = QFormLayout()
-        company_form.setLabelAlignment(Qt.AlignRight)
-        company_form.setSpacing(12)
+        group.setLayout(inner)
+        layout.addWidget(group)
+        layout.addStretch()
+        return tab
+
+    # ---------- تبويب معلومات الشركة ----------
+    def create_company_tab(self):
+        tab = QWidget()
+        tab.setLayoutDirection(Qt.RightToLeft)
+        layout = QVBoxLayout(tab)
+        group = QGroupBox("معلومات الشركة للطباعة")
+        form = QFormLayout()
+        form.setLabelAlignment(Qt.AlignRight)
+
         info = get_company_info()
         self.company_name_edit = QLineEdit(info.get('name', ''))
-        company_form.addRow("اسم الشركة:", self.company_name_edit)
+        form.addRow("اسم الشركة:", self.company_name_edit)
+
         self.company_address_edit = QLineEdit(info.get('address', ''))
-        company_form.addRow("العنوان:", self.company_address_edit)
+        form.addRow("العنوان:", self.company_address_edit)
+
         self.company_phone_edit = QLineEdit(info.get('phone', ''))
-        company_form.addRow("الهاتف:", self.company_phone_edit)
+        form.addRow("الهاتف:", self.company_phone_edit)
+
         self.company_email_edit = QLineEdit(info.get('email', ''))
-        company_form.addRow("البريد الإلكتروني:", self.company_email_edit)
+        form.addRow("البريد الإلكتروني:", self.company_email_edit)
+
         self.company_logo_path_edit = QLineEdit(info.get('logo_path', ''))
         logo_btn = QPushButton("اختيار شعار")
         logo_btn.clicked.connect(self.browse_logo)
-        company_form.addRow("شعار الشركة:", self.company_logo_path_edit)
-        company_form.addRow("", logo_btn)
+        form.addRow("شعار الشركة:", self.company_logo_path_edit)
+        form.addRow("", logo_btn)
+
         save_company_btn = QPushButton("حفظ معلومات الشركة")
         save_company_btn.clicked.connect(self.save_company_info)
-        company_form.addRow(save_company_btn)
-        company_group.setLayout(company_form)
-        company_layout.addWidget(company_group)
-        company_layout.addStretch()
-        tabs.addTab(company_tab, "🏢 الشركة")
+        form.addRow(save_company_btn)
 
-        lang_theme_tab = QWidget()
-        lang_theme_tab.setLayoutDirection(Qt.RightToLeft)
-        lang_theme_layout = QVBoxLayout(lang_theme_tab)
-        lang_theme_layout.setSpacing(20)
-        lang_theme_layout.setContentsMargins(15, 15, 15, 15)
+        group.setLayout(form)
+        layout.addWidget(group)
+        layout.addStretch()
+        return tab
+
+    # ---------- تبويب اللغة والمظهر ----------
+    def create_lang_theme_tab(self):
+        tab = QWidget()
+        tab.setLayoutDirection(Qt.RightToLeft)
+        layout = QVBoxLayout(tab)
 
         lang_group = QGroupBox("اللغة")
         lang_form = QFormLayout()
@@ -148,14 +176,248 @@ class SettingsWidget(QWidget):
         theme_form.addRow(save_theme)
         theme_group.setLayout(theme_form)
 
-        lang_theme_layout.addWidget(lang_group)
-        lang_theme_layout.addWidget(theme_group)
-        lang_theme_layout.addStretch()
-        tabs.addTab(lang_theme_tab, "🌐 اللغة والمظهر")
+        layout.addWidget(lang_group)
+        layout.addWidget(theme_group)
+        layout.addStretch()
+        return tab
 
-        layout.addWidget(tabs)
-        self.load_rates_table()
+    # ---------- تبويب الشبكة ----------
+    def create_network_tab(self):
+        tab = QWidget()
+        tab.setLayoutDirection(Qt.RightToLeft)
+        layout = QVBoxLayout(tab)
+        group = QGroupBox("إعدادات الشبكة")
+        form = QFormLayout()
+        form.setLabelAlignment(Qt.AlignRight)
 
+        self.is_server_check = QCheckBox("تشغيل هذا الجهاز كخادم قاعدة بيانات مركزي")
+        self.is_server_check.toggled.connect(self.on_server_toggled)
+        form.addRow(self.is_server_check)
+
+        self.server_url_edit = QLineEdit()
+        self.server_url_edit.setPlaceholderText("http://192.168.1.100:8000")
+        form.addRow("عنوان الخادم البعيد:", self.server_url_edit)
+
+        save_btn = QPushButton("حفظ الإعدادات")
+        save_btn.clicked.connect(self.save_network_settings)
+        form.addRow(save_btn)
+
+        group.setLayout(form)
+        layout.addWidget(group)
+        layout.addStretch()
+
+        settings = QSettings("Hawaa", "Accounting")
+        is_server = settings.value("network/is_server", False, type=bool)
+        self.is_server_check.setChecked(is_server)
+        self.server_url_edit.setText(settings.value("network/server_url", "http://localhost:8000"))
+        self.on_server_toggled(is_server)
+        return tab
+
+    def on_server_toggled(self, checked):
+        self.server_url_edit.setEnabled(not checked)
+
+    def save_network_settings(self):
+        settings = QSettings("Hawaa", "Accounting")
+        settings.setValue("network/is_server", self.is_server_check.isChecked())
+        settings.setValue("network/server_url", self.server_url_edit.text())
+        QMessageBox.information(self, "نجاح", "سيتم تطبيق الإعدادات بعد إعادة تشغيل التطبيق")
+
+    # ---------- تبويب النسخ الاحتياطي والصيانة ----------
+    def create_backup_tab(self):
+        tab = QWidget()
+        tab.setLayoutDirection(Qt.RightToLeft)
+        layout = QVBoxLayout(tab)
+
+        # النسخ الاحتياطي الدوري
+        periodic_group = QGroupBox("النسخ الاحتياطي الدوري")
+        periodic_layout = QFormLayout()
+        periodic_layout.setLabelAlignment(Qt.AlignRight)
+
+        self.backup_enabled = QCheckBox("تفعيل النسخ الاحتياطي التلقائي")
+        self.backup_interval = QSpinBox()
+        self.backup_interval.setRange(1, 720)
+        self.backup_interval.setSuffix(" ساعة")
+        self.backup_interval.setValue(6)
+        self.backup_folder = QLineEdit()
+        self.backup_folder.setPlaceholderText("مجلد حفظ النسخ الاحتياطية")
+
+        browse_btn = QPushButton("استعراض")
+        browse_btn.clicked.connect(lambda: self._select_backup_folder(self.backup_folder))
+
+        periodic_layout.addRow(self.backup_enabled)
+        periodic_layout.addRow("كل:", self.backup_interval)
+        periodic_layout.addRow("مجلد الوجهة:", self.backup_folder)
+        periodic_layout.addRow("", browse_btn)
+
+        save_periodic_btn = QPushButton("حفظ إعدادات النسخ الاحتياطي")
+        save_periodic_btn.clicked.connect(self.save_backup_settings)
+        periodic_layout.addRow(save_periodic_btn)
+
+        periodic_group.setLayout(periodic_layout)
+        layout.addWidget(periodic_group)
+
+        # نسخة فورية
+        instant_group = QGroupBox("نسخ احتياطي فوري")
+        instant_layout = QHBoxLayout()
+        backup_now_btn = QPushButton("📀 إنشاء نسخة احتياطية الآن")
+        backup_now_btn.clicked.connect(self.create_backup_now)
+        instant_layout.addWidget(backup_now_btn)
+        instant_group.setLayout(instant_layout)
+        layout.addWidget(instant_group)
+
+        # إدارة قاعدة البيانات
+        manage_group = QGroupBox("إدارة قاعدة البيانات")
+        manage_layout = QVBoxLayout()
+        btn_layout = QHBoxLayout()
+        self.export_btn = QPushButton("📤 تصدير قاعدة البيانات")
+        self.export_btn.clicked.connect(self.export_database)
+        self.import_btn = QPushButton("📥 استيراد قاعدة البيانات")
+        self.import_btn.clicked.connect(self.import_database)
+        self.reset_btn = QPushButton("⚠️ إعادة تهيئة قاعدة البيانات")
+        self.reset_btn.setStyleSheet("background-color: #dc3545; color: white;")
+        self.reset_btn.clicked.connect(self.reset_database)
+
+        btn_layout.addWidget(self.export_btn)
+        btn_layout.addWidget(self.import_btn)
+        btn_layout.addWidget(self.reset_btn)
+        manage_layout.addLayout(btn_layout)
+        manage_group.setLayout(manage_layout)
+        layout.addWidget(manage_group)
+
+        # الترخيص
+        license_group = QGroupBox("الترخيص")
+        license_layout = QVBoxLayout()
+        self.license_status_label = QLabel("جاري التحقق...")
+        license_layout.addWidget(self.license_status_label)
+        reactivate_btn = QPushButton("🔄 إعادة التفعيل")
+        reactivate_btn.clicked.connect(self.reactivate_license)
+        license_layout.addWidget(reactivate_btn)
+        license_group.setLayout(license_layout)
+        layout.addWidget(license_group)
+
+        layout.addStretch()
+
+        self.load_backup_settings()
+        self.update_license_status()
+        return tab
+
+    # ---------- دوال النسخ الاحتياطي ----------
+    def _is_remote_client(self):
+        from database.connection import DatabaseConnection
+        db = DatabaseConnection()
+        return db._use_http()
+
+    def _select_backup_folder(self, line_edit):
+        folder = QFileDialog.getExistingDirectory(self, "اختر مجلد النسخ الاحتياطي")
+        if folder:
+            line_edit.setText(folder)
+
+    def save_backup_settings(self):
+        settings = QSettings("Hawaa", "Accounting")
+        settings.setValue("backup/enabled", self.backup_enabled.isChecked())
+        settings.setValue("backup/interval_hours", self.backup_interval.value())
+        settings.setValue("backup/folder", self.backup_folder.text())
+        QMessageBox.information(self, "نجاح", "تم حفظ إعدادات النسخ الاحتياطي")
+        # إصدار إشارة لتحديث النسخ الاحتياطي الدوري دون إعادة تشغيل
+        self.backup_settings_changed.emit()
+
+    def load_backup_settings(self):
+        settings = QSettings("Hawaa", "Accounting")
+        self.backup_enabled.setChecked(settings.value("backup/enabled", False, type=bool))
+        self.backup_interval.setValue(settings.value("backup/interval_hours", 6, type=int))
+        self.backup_folder.setText(settings.value("backup/folder", ""))
+
+    def create_backup_now(self):
+        from database.connection import DB_PATH
+        folder = self.backup_folder.text().strip()
+        if not folder:
+            QMessageBox.warning(self, "خطأ", "يرجى تحديد مجلد النسخ الاحتياطي أولاً")
+            return
+        if not os.path.exists(folder):
+            os.makedirs(folder)
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        backup_name = f"hawaa_backup_{timestamp}.db"
+        backup_path = os.path.join(folder, backup_name)
+        try:
+            shutil.copy2(DB_PATH, backup_path)
+            QMessageBox.information(self, "نجاح", f"تم إنشاء النسخة الاحتياطية:\n{backup_path}")
+        except Exception as e:
+            QMessageBox.critical(self, "خطأ", f"فشل النسخ الاحتياطي: {str(e)}")
+
+    def export_database(self):
+        if self._is_remote_client():
+            QMessageBox.warning(self, "تنبيه",
+                "أنت متصل بخادم بعيد (وضع عميل).\n"
+                "عملية التصدير تؤثر على قاعدة البيانات المحلية فقط، وليس على الخادم.\n"
+                "لتصدير قاعدة بيانات الخادم، يُرجى تنفيذ هذه العملية مباشرة على جهاز الخادم.")
+        from database.connection import DB_PATH
+        filename, _ = QFileDialog.getSaveFileName(self, "تصدير قاعدة البيانات", "hawaa_data_backup.db", "SQLite (*.db)")
+        if filename:
+            try:
+                if os.path.exists(DB_PATH):
+                    shutil.copy2(DB_PATH, filename)
+                    QMessageBox.information(self, "نجاح", f"تم التصدير إلى:\n{filename}")
+                else:
+                    QMessageBox.warning(self, "تنبيه", "لا توجد قاعدة بيانات محلية للتصدير (أنت في وضع عميل).")
+            except Exception as e:
+                QMessageBox.critical(self, "خطأ", f"فشل التصدير: {str(e)}")
+
+    def import_database(self):
+        if self._is_remote_client():
+            QMessageBox.warning(self, "تنبيه",
+                "أنت متصل بخادم بعيد (وضع عميل).\n"
+                "عملية الاستيراد ستؤثر فقط على قاعدة البيانات المحلية (إن وجدت)، وليس على الخادم.\n"
+                "لتغيير قاعدة بيانات الخادم، يُرجى تنفيذ هذه العملية على جهاز الخادم.")
+        from database.connection import DB_PATH
+        filename, _ = QFileDialog.getOpenFileName(self, "استيراد قاعدة البيانات", "", "SQLite (*.db)")
+        if filename:
+            reply = QMessageBox.question(self, "تأكيد", "سيتم استبدال قاعدة البيانات المحلية الحالية. تأكيد؟",
+                                         QMessageBox.Yes | QMessageBox.No)
+            if reply == QMessageBox.Yes:
+                try:
+                    shutil.copy2(filename, DB_PATH)
+                    QMessageBox.information(self, "نجاح", "تم الاستيراد. يرجى إعادة تشغيل التطبيق.")
+                except Exception as e:
+                    QMessageBox.critical(self, "خطأ", f"فشل الاستيراد: {str(e)}")
+
+    def reset_database(self):
+        if self._is_remote_client():
+            QMessageBox.warning(self, "عملية غير مسموحة",
+                "لا يمكن إعادة تهيئة قاعدة البيانات من جهاز عميل.\n"
+                "يُرجى تنفيذ هذه العملية مباشرة على جهاز الخادم.")
+            return
+        from database.connection import DB_PATH
+        reply = QMessageBox.question(self, "تأكيد خطير",
+            "سيتم حذف كل البيانات وإعادة تهيئة قاعدة البيانات المحلية.\nلا يمكن التراجع. متابعة؟",
+            QMessageBox.Yes | QMessageBox.No)
+        if reply == QMessageBox.Yes:
+            try:
+                if os.path.exists(DB_PATH):
+                    os.remove(DB_PATH)
+                from database.migrations import init_database
+                init_database()
+                QMessageBox.information(self, "نجاح", "تم إعادة تهيئة قاعدة البيانات المحلية. يرجى إعادة تشغيل التطبيق.")
+            except Exception as e:
+                QMessageBox.critical(self, "خطأ", f"فشل إعادة التهيئة: {str(e)}")
+
+    def update_license_status(self):
+        from auth.activation import check_activation
+        valid, msg = check_activation()
+        if valid:
+            self.license_status_label.setText("✅ الترخيص ساري")
+            self.license_status_label.setStyleSheet("color: green;")
+        else:
+            self.license_status_label.setText(f"❌ الترخيص غير صالح: {msg}")
+            self.license_status_label.setStyleSheet("color: red;")
+
+    def reactivate_license(self):
+        from views.activation_dialog import ActivationDialog
+        dlg = ActivationDialog(self)
+        if dlg.exec() == ActivationDialog.Accepted:
+            self.update_license_status()
+            QMessageBox.information(self, "نجاح", "تم التفعيل بنجاح")
+
+    # ---------- الدوال المساعدة الأخرى ----------
     def load_rates_table(self):
         rates = currency.get_all_currencies()
         self.rates_table.setRowCount(len(rates))
@@ -198,7 +460,6 @@ class SettingsWidget(QWidget):
             main_window.pages['dashboard'].refresh()
         if hasattr(main_window, 'pages') and 'accounts' in main_window.pages:
             main_window.pages['accounts'].refresh_table()
-        
         self.rates_changed.emit()
 
     def fetch_online_rates(self):
@@ -249,4 +510,3 @@ class SettingsWidget(QWidget):
         }
         save_company_info(info)
         QMessageBox.information(self, "نجاح", "تم حفظ معلومات الشركة")
-

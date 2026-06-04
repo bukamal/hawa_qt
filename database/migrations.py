@@ -6,10 +6,18 @@ from database.connection import DatabaseConnection, DB_PATH
 from auth.password import hash_password
 
 def init_database():
+    # في وضع HTTP، لا حاجة لإنشاء قاعدة بيانات محلية إذا كان الملف غير موجود
+    # لكننا ننشئها فقط إذا كنا في وضع SQLite المحلي
     db = DatabaseConnection()
+    if db._use_http():
+        # وضع العميل: لا ننشئ قاعدة بيانات محلية، بل نعتمد على الخادم
+        print("⚠️ وضع العميل: قاعدة البيانات على الخادم، لا حاجة لإنشاء محلي.")
+        return
+
+    # وضع SQLite المحلي
     conn = db.get_connection()
     cursor = conn.cursor()
-    
+
     cursor.executescript('''
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -22,7 +30,7 @@ def init_database():
             last_login TEXT,
             force_password_change INTEGER DEFAULT 0
         );
-        
+
         CREATE TABLE IF NOT EXISTS audit_log (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER,
@@ -34,7 +42,7 @@ def init_database():
             ip_address TEXT,
             timestamp TEXT
         );
-        
+
         CREATE TABLE IF NOT EXISTS expenses (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             company_name TEXT NOT NULL,
@@ -51,19 +59,19 @@ def init_database():
             currency_original TEXT NOT NULL DEFAULT 'SAR',
             exchange_rate_to_usd REAL NOT NULL DEFAULT 1.0
         );
-        
+
         CREATE TABLE IF NOT EXISTS settings (
             key TEXT PRIMARY KEY,
             value TEXT
         );
-        
+
         CREATE TABLE IF NOT EXISTS exchange_rates (
             currency_code TEXT PRIMARY KEY,
             rate_to_usd REAL NOT NULL,
             updated_at TEXT
         );
     ''')
-    
+
     cursor.executescript('''
         CREATE INDEX IF NOT EXISTS idx_expenses_company ON expenses(company_name);
         CREATE INDEX IF NOT EXISTS idx_expenses_date ON expenses(date);
@@ -71,7 +79,7 @@ def init_database():
         CREATE INDEX IF NOT EXISTS idx_audit_log_timestamp ON audit_log(timestamp);
         CREATE INDEX IF NOT EXISTS idx_audit_log_table ON audit_log(table_name);
     ''')
-    
+
     cursor.executescript('''
         INSERT OR IGNORE INTO settings (key, value) VALUES ('currency_decimals', '2');
         INSERT OR IGNORE INTO settings (key, value) VALUES ('number_format', 'western');
@@ -81,7 +89,7 @@ def init_database():
         INSERT OR IGNORE INTO settings (key, value) VALUES ('display_currency', 'USD');
         INSERT OR IGNORE INTO settings (key, value) VALUES ('abbreviate_numbers', 'false');
     ''')
-    
+
     now = datetime.datetime.now().isoformat()
     default_rates = [
         ('USD', 1.0), ('SAR', 3.75), ('SYP', 14000.0), ('EUR', 0.92),
@@ -90,7 +98,7 @@ def init_database():
     for code, rate in default_rates:
         cursor.execute("INSERT OR IGNORE INTO exchange_rates (currency_code, rate_to_usd, updated_at) VALUES (?,?,?)",
                        (code, rate, now))
-    
+
     cursor.execute("SELECT id FROM users WHERE username = 'admin'")
     if not cursor.fetchone():
         pwd_hash, salt = hash_password('admin123')
@@ -99,15 +107,19 @@ def init_database():
             INSERT INTO users (username, password_hash, salt, full_name, role, created_at, force_password_change)
             VALUES (?,?,?,?,?,?,?)
         ''', ('admin', pwd_hash, salt, 'المدير العام', 'admin', now, 1))
-    
+
     conn.commit()
-    print("✅ تم تهيئة قاعدة البيانات مع دعم العملات المتعددة واختصار الأعداد والأعمدة الأصلية")
+    print("✅ تم تهيئة قاعدة البيانات المحلية")
 
 def ensure_db():
+    # فقط إذا كنا في وضع SQLite المحلي (ليس HTTP) نقوم بإنشاء/تحديث
+    db = DatabaseConnection()
+    if db._use_http():
+        # في وضع العميل، لا نتأكد من وجود قاعدة بيانات محلية
+        return
     if not os.path.exists(DB_PATH):
         init_database()
     else:
-        # محاولة إضافة الأعمدة الجديدة إذا كانت قاعدة البيانات موجودة مسبقاً
         try:
             conn = sqlite3.connect(DB_PATH)
             cursor = conn.cursor()
@@ -119,11 +131,9 @@ def ensure_db():
                 cursor.execute("ALTER TABLE expenses ADD COLUMN currency_original TEXT NOT NULL DEFAULT 'SAR'")
             if 'exchange_rate_to_usd' not in columns:
                 cursor.execute("ALTER TABLE expenses ADD COLUMN exchange_rate_to_usd REAL NOT NULL DEFAULT 1.0")
-            # تحديث البيانات القديمة بالقيم الافتراضية
             cursor.execute("UPDATE expenses SET amount_original = amount, currency_original = currency, exchange_rate_to_usd = 1.0 WHERE amount_original = 0")
             conn.commit()
             conn.close()
         except Exception as e:
             print(f"تحذير: تعذر تحديث قاعدة البيانات القديمة: {e}")
-        # ثم ننشئ الجداول المتبقية إذا لم تكن موجودة
         init_database()

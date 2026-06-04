@@ -44,20 +44,15 @@ def clean_text(text: str) -> str:
     text = re.sub(r'\s+', ' ', text)
     return text.strip()
 
-# ========== فلتر تحديد النص تلقائياً (محسّن) ==========
 class FocusSelectFilter(QObject):
     def eventFilter(self, obj, event):
         if event.type() == QEvent.FocusIn:
-            # تحديد النص بعد أن يكتمل التركيز مباشرة
-            # استخدام QTimer.singleShot(0) بدلاً من 50 مللي ثانية لضمان التنفيذ بعد اكتمال الحدث
             QTimer.singleShot(0, lambda: self._select_all_text(obj))
         return super().eventFilter(obj, event)
     
     def _select_all_text(self, obj):
         try:
-            # تجنب تحديد النص إذا كان التركيز ناتجاً عن النقر على زر أو عنصر آخر
             if QApplication.mouseButtons() != Qt.NoButton:
-                # إذا كان الماوس لا يزال مضغوطاً، ربما هو بداية تحديد جزئي، ننتظر قليلاً
                 QTimer.singleShot(100, lambda: self._select_all_text(obj))
                 return
             if isinstance(obj, QLineEdit):
@@ -70,7 +65,6 @@ class FocusSelectFilter(QObject):
                     if le:
                         le.selectAll()
             elif isinstance(obj, QDateEdit):
-                # QDateEdit يحتوي على QLineEdit داخلي
                 le = obj.findChild(QLineEdit)
                 if le:
                     le.selectAll()
@@ -84,13 +78,11 @@ class FocusSelectFilter(QObject):
             pass
 
 def enable_auto_select_all(app):
-    """تثبيت فلتر تحديد النص تلقائياً على مستوى التطبيق"""
     filter_obj = FocusSelectFilter()
     app.installEventFilter(filter_obj)
-    print("✅ تم تفعيل خاصية تحديد النص تلقائياً عند التركيز (محسّن)")
+    print("✅ تم تفعيل خاصية تحديد النص تلقائياً عند التركيز")
 
 def apply_auto_select_to_widget(widget):
-    """تطبيق خاصية تحديد النص على عنصر معين وأبنائه"""
     filter_obj = FocusSelectFilter()
     if isinstance(widget, (QLineEdit, QTextEdit, QComboBox, QDateEdit, QSpinBox, QDoubleSpinBox)):
         widget.installEventFilter(filter_obj)
