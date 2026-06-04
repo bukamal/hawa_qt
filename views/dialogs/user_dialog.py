@@ -8,8 +8,8 @@ from views.dialogs.change_password_dialog import ChangePasswordDialog
 
 class UserDialog(CenteredDialog):
     def __init__(self, parent=None, user_id=None):
-        super().__init__(parent)
-        self.setLayoutDirection(Qt.RightToLeft)  # RTL
+        super().__init__(parent=parent)
+        self.setLayoutDirection(Qt.RightToLeft)
         self.user_id = user_id
         self.setWindowTitle(translate('edit') if user_id else translate('add'))
         self.resize(400, 350)
@@ -18,7 +18,7 @@ class UserDialog(CenteredDialog):
         layout.setContentsMargins(20,20,20,20)
         
         form = QFormLayout()
-        form.setLabelAlignment(Qt.AlignRight)  # محاذاة التسميات لليمين
+        form.setLabelAlignment(Qt.AlignRight)
         self.username_edit = QLineEdit()
         if user_id:
             self.username_edit.setEnabled(False)
@@ -43,7 +43,7 @@ class UserDialog(CenteredDialog):
         layout.addLayout(form)
         
         btns = QHBoxLayout()
-        btns.setDirection(QHBoxLayout.RightToLeft)  # RTL
+        btns.setDirection(QHBoxLayout.RightToLeft)
         save_btn = QPushButton(translate('save'))
         save_btn.clicked.connect(self.save)
         cancel_btn = QPushButton(translate('cancel'))
@@ -94,3 +94,4 @@ class UserDialog(CenteredDialog):
     def change_password(self):
         dlg = ChangePasswordDialog(self, user_id=self.user_id)
         dlg.exec()
+

@@ -9,7 +9,7 @@ class FramelessDialog(QDialog):
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.Dialog)
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setModal(True)
-        self.setLayoutDirection(Qt.LeftToRight)  # LTR
+        self.setLayoutDirection(Qt.LeftToRight)
         self.drag_pos = None
         
         self.main_frame = QFrame(self)
@@ -44,7 +44,6 @@ class FramelessDialog(QDialog):
         title_layout.addWidget(self.title_label)
         title_layout.addStretch()
         
-        # أزرار التحكم LTR (إغلاق، تكبير، تصغير)
         self.close_btn = QPushButton()
         self.close_btn.setIcon(qta.icon('fa5s.times'))
         self.close_btn.setFixedSize(32, 32)
@@ -106,20 +105,33 @@ class FramelessDialog(QDialog):
         anim.start()
         self.animation = anim
     
-    def _ensure_centered(self):
+    def showEvent(self, event):
+        """التمركز على النافذة الأم عند الظهور"""
+        super().showEvent(event)
+        self._center_on_parent()
+    
+    def _center_on_parent(self):
+        """تمركز الحوار على نافذته الأم"""
         parent = self.parent()
         if parent and parent.isVisible():
-            geo = parent.geometry()
-            x = geo.x() + (geo.width() - self.width()) // 2
-            y = geo.y() + (geo.height() - self.height()) // 2
+            parent_geo = parent.geometry()
+            parent_center = parent_geo.center()
+            dialog_geo = self.geometry()
+            x = parent_center.x() - dialog_geo.width() // 2
+            y = parent_center.y() - dialog_geo.height() // 2
+            screen = self.screen().geometry()
+            x = max(screen.left(), min(x, screen.right() - dialog_geo.width()))
+            y = max(screen.top(), min(y, screen.bottom() - dialog_geo.height()))
             self.move(x, y)
         else:
             screen = self.screen().geometry()
-            self.move((screen.width() - self.width()) // 2, (screen.height() - self.height()) // 2)
+            x = (screen.width() - self.width()) // 2
+            y = (screen.height() - self.height()) // 2
+            self.move(x, y)
     
     def exec(self):
-        self._ensure_centered()
         return super().exec()
     
     def exec_(self):
         return self.exec()
+

@@ -4,6 +4,7 @@ import json
 import sqlite3
 import os
 import uuid
+import datetime
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import urllib.parse
 
@@ -15,6 +16,13 @@ def init_db():
     conn = sqlite3.connect(DB_PATH, isolation_level=None)
     conn.row_factory = sqlite3.Row
     conn.close()
+
+def log_audit_on_server(cursor, client_ip, user_id, username, action, table_name, record_id, details):
+    now = datetime.datetime.now().isoformat()
+    cursor.execute("""
+        INSERT INTO audit_log (user_id, username, action, table_name, record_id, details, ip_address, timestamp)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    """, (user_id, username, action, table_name, record_id, details, client_ip, now))
 
 class HawaaHandler(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -28,6 +36,7 @@ class HawaaHandler(BaseHTTPRequestHandler):
             self.end_headers()
 
     def do_POST(self):
+        client_ip = self.client_address[0]
         try:
             content_length = int(self.headers.get('Content-Length', 0))
             body = self.rfile.read(content_length).decode('utf-8')
@@ -54,15 +63,29 @@ class HawaaHandler(BaseHTTPRequestHandler):
             conn_id = data.get('connection_id')
             sql = data.get('sql')
             params = data.get('params', [])
+            audit_info = data.get('audit', {})
             if conn_id not in connections:
                 self._send_error("Connection not found", 404)
                 return
             conn = connections[conn_id]
             try:
                 cursor = conn.execute(sql, params)
+                sql_upper = sql.strip().upper()
+                is_write_op = any(sql_upper.startswith(x) for x in ['INSERT', 'UPDATE', 'DELETE'])
+                if is_write_op and audit_info:
+                    log_audit_on_server(
+                        cursor, client_ip,
+                        audit_info.get('user_id'),
+                        audit_info.get('username'),
+                        audit_info.get('action'),
+                        audit_info.get('table_name'),
+                        audit_info.get('record_id'),
+                        audit_info.get('details')
+                    )
                 rows = None
-                if sql.strip().upper().startswith("SELECT"):
+                if sql_upper.startswith("SELECT"):
                     rows = [dict(row) for row in cursor.fetchall()]
+                conn.commit()
                 self._send_json({
                     "success": True,
                     "rows": rows,
@@ -70,6 +93,7 @@ class HawaaHandler(BaseHTTPRequestHandler):
                     "lastrowid": cursor.lastrowid
                 })
             except Exception as e:
+                conn.rollback()
                 self._send_json({"success": False, "error": str(e)})
 
         elif path == '/commit':

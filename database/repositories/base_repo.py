@@ -6,11 +6,17 @@ class BaseRepository:
     def __init__(self):
         self.db = DatabaseConnection()
     
-    def _execute(self, sql: str, params: tuple = ()):
-        return self.db.execute(sql, params)
+    def _execute(self, sql: str, params: tuple = (), audit_data: dict = None):
+        if hasattr(self.db, '_use_http') and self.db._use_http():
+            return self.db.execute(sql, params, audit_data)
+        else:
+            return self.db.execute(sql, params)
     
-    def _executemany(self, sql: str, params_list: list):
-        return self.db.executemany(sql, params_list)
+    def _executemany(self, sql: str, params_list: list, audit_data: dict = None):
+        if hasattr(self.db, '_use_http') and self.db._use_http():
+            return self.db.executemany(sql, params_list, audit_data)
+        else:
+            return self.db.executemany(sql, params_list)
     
     def _fetch_one(self, sql: str, params: tuple = ()) -> Optional[Dict]:
         cur = self._execute(sql, params)

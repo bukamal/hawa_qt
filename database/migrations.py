@@ -90,6 +90,14 @@ def init_database():
         INSERT OR IGNORE INTO settings (key, value) VALUES ('abbreviate_numbers', 'false');
     ''')
 
+    # إعدادات الشركة الافتراضية
+    cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('company_name', 'هوى الشام للسياحة والسفر')")
+    cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('company_address', 'المملكة العربية السعودية - الرياض')")
+    cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('company_phone', '+966 12 3456789')")
+    cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('company_email', 'info@hawaa.com')")
+    cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('company_tax_number', '')")
+    cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('company_logo_path', '')")
+
     now = datetime.datetime.now().isoformat()
     default_rates = [
         ('USD', 1.0), ('SAR', 3.75), ('SYP', 14000.0), ('EUR', 0.92),

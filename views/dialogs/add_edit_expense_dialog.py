@@ -8,7 +8,7 @@ from currency import currency
 
 class AddEditExpenseDialog(CenteredDialog):
     def __init__(self, parent=None, expense=None, company_name=None):
-        super().__init__(parent)
+        super().__init__(parent=parent)
         self.expense = expense
         self.predefined_company = company_name
         self.setWindowTitle(translate('add') if not expense else translate('edit'))
@@ -59,7 +59,6 @@ class AddEditExpenseDialog(CenteredDialog):
         self.rate_label.setStyleSheet("color: #10b981; font-size: 10px;")
         form.addRow("", self.rate_label)
         
-        # عرض سعر الصرف التاريخي عند التعديل
         self.historical_rate_label = QLabel()
         self.historical_rate_label.setStyleSheet("color: #f59e0b; font-size: 10px; font-weight: bold;")
         if expense and expense.get('exchange_rate_to_usd'):
@@ -138,3 +137,4 @@ class AddEditExpenseDialog(CenteredDialog):
         else:
             repo.add(company, amount, type_val, date, notes, currency_code, user_id)
         self.accept()
+

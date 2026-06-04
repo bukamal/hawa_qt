@@ -228,7 +228,6 @@ class SettingsWidget(QWidget):
         if not url:
             QMessageBox.warning(self, "تنبيه", "يرجى إدخال عنوان الخادم")
             return
-        # إضافة http:// إذا لم تكن موجودة
         if not url.startswith("http://") and not url.startswith("https://"):
             url = "http://" + url
         try:
@@ -319,9 +318,36 @@ class SettingsWidget(QWidget):
 
         layout.addStretch()
 
+        # تعطيل عناصر النسخ الاحتياطي إذا كنا في وضع العميل
+        self._disable_backup_controls(periodic_group)
+        self._disable_backup_controls(instant_group)
+        self._disable_backup_controls(manage_group)
+
         self.load_backup_settings()
         self.update_license_status()
         return tab
+
+    def _disable_backup_controls(self, container):
+        """تعطيل جميع عناصر التحكم في النسخ الاحتياطي عند وضع العميل وإظهار رسالة"""
+        if self._is_remote_client():
+            for child in container.findChildren(QPushButton):
+                child.setEnabled(False)
+            for child in container.findChildren(QCheckBox):
+                child.setEnabled(False)
+            for child in container.findChildren(QSpinBox):
+                child.setEnabled(False)
+            for child in container.findChildren(QLineEdit):
+                child.setEnabled(False)
+            # إضافة ملصق توضيحي في أعلى التبويب إذا لم يكن موجودًا
+            if not hasattr(self, '_backup_warning_label'):
+                label = QLabel("⚠️ أنت متصل بخادم بعيد. يتم إجراء النسخ الاحتياطي مركزيًا على الخادم. لا حاجة لنسخ احتياطي محلي.")
+                label.setStyleSheet("color: orange; font-weight: bold; margin: 10px;")
+                label.setWordWrap(True)
+                # نضيفه في بداية layout التبويب (أعلى كل شيء)
+                parent_layout = container.parentWidget().layout()
+                if parent_layout:
+                    parent_layout.insertWidget(0, label)
+                self._backup_warning_label = label
 
     # ---------- دوال النسخ الاحتياطي ----------
     def _is_remote_client(self):
@@ -335,6 +361,9 @@ class SettingsWidget(QWidget):
             line_edit.setText(folder)
 
     def save_backup_settings(self):
+        if self._is_remote_client():
+            QMessageBox.warning(self, "تنبيه", "لا يمكن حفظ إعدادات النسخ الاحتياطي في وضع العميل.")
+            return
         settings = QSettings("Hawaa", "Accounting")
         settings.setValue("backup/enabled", self.backup_enabled.isChecked())
         settings.setValue("backup/interval_hours", self.backup_interval.value())
@@ -349,6 +378,9 @@ class SettingsWidget(QWidget):
         self.backup_folder.setText(settings.value("backup/folder", ""))
 
     def create_backup_now(self):
+        if self._is_remote_client():
+            QMessageBox.warning(self, "تنبيه", "لا يمكن إنشاء نسخة احتياطية من جهاز عميل. يرجى تنفيذ هذه العملية على جهاز الخادم.")
+            return
         from database.connection import DB_PATH
         folder = self.backup_folder.text().strip()
         if not folder:
@@ -367,7 +399,8 @@ class SettingsWidget(QWidget):
 
     def export_database(self):
         if self._is_remote_client():
-            QMessageBox.warning(self, "تنبيه", "أنت متصل بخادم بعيد (وضع عميل).\nعملية التصدير تؤثر فقط على قاعدة البيانات المحلية (إن وجدت).\nلتصدير قاعدة بيانات الخادم، يُرجى تنفيذ هذه العملية على جهاز الخادم.")
+            QMessageBox.warning(self, "تنبيه", "أنت متصل بخادم بعيد. عملية التصدير تؤثر فقط على قاعدة البيانات المحلية (غير مستخدمة). يرجى تصدير البيانات من الخادم مباشرة.")
+            return
         from database.connection import DB_PATH
         filename, _ = QFileDialog.getSaveFileName(self, "تصدير قاعدة البيانات", "hawaa_data_backup.db", "SQLite (*.db)")
         if filename:
@@ -382,7 +415,8 @@ class SettingsWidget(QWidget):
 
     def import_database(self):
         if self._is_remote_client():
-            QMessageBox.warning(self, "تنبيه", "أنت متصل بخادم بعيد (وضع عميل).\nعملية الاستيراد ستؤثر فقط على قاعدة البيانات المحلية (إن وجدت).\nلتغيير قاعدة بيانات الخادم، يُرجى تنفيذ هذه العملية على جهاز الخادم.")
+            QMessageBox.warning(self, "تنبيه", "لا يمكن استيراد قاعدة بيانات من جهاز عميل. يرجى تنفيذ هذه العملية على جهاز الخادم.")
+            return
         from database.connection import DB_PATH
         filename, _ = QFileDialog.getOpenFileName(self, "استيراد قاعدة البيانات", "", "SQLite (*.db)")
         if filename:
@@ -397,7 +431,7 @@ class SettingsWidget(QWidget):
 
     def reset_database(self):
         if self._is_remote_client():
-            QMessageBox.warning(self, "عملية غير مسموحة", "لا يمكن إعادة تهيئة قاعدة البيانات من جهاز عميل.\nيُرجى تنفيذ هذه العملية مباشرة على جهاز الخادم.")
+            QMessageBox.warning(self, "تنبيه", "لا يمكن إعادة تهيئة قاعدة البيانات من جهاز عميل. يرجى تنفيذ هذه العملية على جهاز الخادم.")
             return
         from database.connection import DB_PATH
         reply = QMessageBox.question(self, "تأكيد خطير", "سيتم حذف كل البيانات وإعادة تهيئة قاعدة البيانات المحلية.\nلا يمكن التراجع. متابعة؟",

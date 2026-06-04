@@ -7,8 +7,8 @@ from i18n.translator import translate
 
 class ChangePasswordDialog(FramelessDialog):
     def __init__(self, parent=None, user_id=None):
-        super().__init__(parent)
-        self.setLayoutDirection(Qt.RightToLeft)  # RTL
+        super().__init__(parent=parent)
+        self.setLayoutDirection(Qt.RightToLeft)
         self.user_id = user_id or (UserSession.get_current()['id'] if UserSession.get_current() else None)
         self.setWindowTitle(translate('change_password'))
         self.resize(450, 300)
@@ -17,7 +17,7 @@ class ChangePasswordDialog(FramelessDialog):
         layout.setContentsMargins(20,20,20,20)
         
         form = QFormLayout()
-        form.setLabelAlignment(Qt.AlignRight)  # محاذاة التسميات لليمين
+        form.setLabelAlignment(Qt.AlignRight)
         self.old_edit = QLineEdit()
         self.old_edit.setEchoMode(QLineEdit.Password)
         form.addRow(translate('old_password')+":", self.old_edit)
@@ -30,7 +30,7 @@ class ChangePasswordDialog(FramelessDialog):
         layout.addLayout(form)
         
         btns = QHBoxLayout()
-        btns.setDirection(QHBoxLayout.RightToLeft)  # RTL
+        btns.setDirection(QHBoxLayout.RightToLeft)
         save_btn = QPushButton(translate('save'))
         save_btn.setObjectName("primary")
         save_btn.clicked.connect(self.save)
@@ -57,3 +57,4 @@ class ChangePasswordDialog(FramelessDialog):
             self.accept()
         else:
             QMessageBox.warning(self, translate('error'), "كلمة المرور الحالية غير صحيحة")
+

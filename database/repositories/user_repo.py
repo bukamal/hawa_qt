@@ -1,6 +1,5 @@
 # -*- coding: utf-8 -*-
 from database.repositories.base_repo import BaseRepository
-from database.repositories.audit_repo import AuditRepository
 from auth.password import hash_password, verify_password
 from auth.session import UserSession
 import datetime
@@ -33,9 +32,16 @@ class UserRepository(BaseRepository):
             cur = self._execute("INSERT INTO users (username, password_hash, salt, full_name, role, created_at) VALUES (?,?,?,?,?,?)",
                                 (username, pwd_hash, salt, full_name, role, now))
             user_id = cur.lastrowid
-            audit = AuditRepository()
             current = UserSession.get_current()
-            audit.log(current['id'] if current else None, current['username'] if current else '', "إضافة مستخدم", 'users', user_id, f"المستخدم: {username}")
+            audit_data = {
+                'user_id': current['id'] if current else None,
+                'username': current['username'] if current else '',
+                'action': "إضافة مستخدم",
+                'table_name': 'users',
+                'record_id': user_id,
+                'details': f"المستخدم: {username}"
+            }
+            self._execute("SELECT 1", audit_data=audit_data)
             self._commit()
             return user_id
         except Exception as e:
@@ -48,9 +54,16 @@ class UserRepository(BaseRepository):
         self.begin()
         try:
             self._execute("UPDATE users SET full_name=?, role=? WHERE id=?", (full_name, role, user_id))
-            audit = AuditRepository()
             current = UserSession.get_current()
-            audit.log(current['id'] if current else None, current['username'] if current else '', "تعديل مستخدم", 'users', user_id, f"الاسم: {full_name}, صلاحية: {role}")
+            audit_data = {
+                'user_id': current['id'] if current else None,
+                'username': current['username'] if current else '',
+                'action': "تعديل مستخدم",
+                'table_name': 'users',
+                'record_id': user_id,
+                'details': f"الاسم: {full_name}, صلاحية: {role}"
+            }
+            self._execute("SELECT 1", audit_data=audit_data)
             self._commit()
         except Exception as e:
             self._rollback()
@@ -64,9 +77,16 @@ class UserRepository(BaseRepository):
         self.begin()
         try:
             self._execute("UPDATE users SET password_hash=?, salt=?, force_password_change=0 WHERE id=?", (new_hash, new_salt, user_id))
-            audit = AuditRepository()
             current = UserSession.get_current()
-            audit.log(current['id'] if current else None, current['username'] if current else '', "تغيير كلمة المرور", 'users', user_id, "")
+            audit_data = {
+                'user_id': current['id'] if current else None,
+                'username': current['username'] if current else '',
+                'action': "تغيير كلمة المرور",
+                'table_name': 'users',
+                'record_id': user_id,
+                'details': ""
+            }
+            self._execute("SELECT 1", audit_data=audit_data)
             self._commit()
             return True
         except:
@@ -80,9 +100,16 @@ class UserRepository(BaseRepository):
         try:
             user = self.get_by_id(user_id)
             self._execute("DELETE FROM users WHERE id=?", (user_id,))
-            audit = AuditRepository()
             current = UserSession.get_current()
-            audit.log(current['id'] if current else None, current['username'] if current else '', "حذف مستخدم", 'users', user_id, f"المستخدم: {user['username']}")
+            audit_data = {
+                'user_id': current['id'] if current else None,
+                'username': current['username'] if current else '',
+                'action': "حذف مستخدم",
+                'table_name': 'users',
+                'record_id': user_id,
+                'details': f"المستخدم: {user['username']}"
+            }
+            self._execute("SELECT 1", audit_data=audit_data)
             self._commit()
             return True
         except:

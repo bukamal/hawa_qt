@@ -17,7 +17,7 @@ import re
 
 class CompanyDetailsDialog(CenteredDialog):
     def __init__(self, company_name, parent=None):
-        super().__init__(parent)
+        super().__init__(parent=parent)
         self.company_name = company_name
         self.setWindowTitle(f"تفاصيل حسابات {company_name}")
         self.resize(1000, 600)
@@ -34,7 +34,6 @@ class CompanyDetailsDialog(CenteredDialog):
 
         btn_layout = QHBoxLayout()
         
-        # إظهار الأزرار فقط إذا لم يكن المستخدم مشاهداً
         is_viewer = UserSession.get_current().get('role') == 'viewer'
         
         self.add_btn = QPushButton("➕ "+translate('add'))
@@ -177,7 +176,7 @@ class CompanyDetailsDialog(CenteredDialog):
         if not text:
             return ''
         text = str(text)
-        bad = ['\u200e', '\u200f', '\ufeff', '\u202a', '\u202b', '\u202c', '\u202d', '\u202e', '浏', '�']
+        bad = ['\u200e', '\u200f', '\ufeff', '\u202a', '\u202b', '\u202c', '\u202d', '\u202e', '浏', '']
         for ch in bad:
             text = text.replace(ch, '')
         text = re.sub(r'[^\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFFa-zA-Z0-9\s\-\.\,\:\;\(\)\/\+%\$]', '', text)

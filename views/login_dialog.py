@@ -20,7 +20,6 @@ class LoginDialog(FramelessDialog):
         layout.setSpacing(16)
         layout.setContentsMargins(30, 20, 30, 30)
 
-        # شعار
         logo = QLabel("🏢 هوى الشام")
         logo.setAlignment(Qt.AlignCenter)
         logo.setStyleSheet(f"font-size: 32px; font-weight: bold; color: {ThemeManager.get('primary')};")
@@ -33,7 +32,6 @@ class LoginDialog(FramelessDialog):
 
         layout.addSpacing(20)
 
-        # اسم المستخدم (قائمة منسدلة)
         self.username_combo = QComboBox()
         self.username_combo.setEditable(True)
         self.username_combo.setPlaceholderText(translate('username'))
@@ -41,7 +39,6 @@ class LoginDialog(FramelessDialog):
         self._populate_users()
         layout.addWidget(self.username_combo)
 
-        # كلمة المرور
         pwd_layout = QHBoxLayout()
         self.password_edit = QLineEdit()
         self.password_edit.setPlaceholderText(translate('password'))
@@ -55,7 +52,6 @@ class LoginDialog(FramelessDialog):
         pwd_layout.addWidget(self.show_pwd_btn)
         layout.addLayout(pwd_layout)
 
-        # خيارات
         options_layout = QHBoxLayout()
         self.remember_check = QCheckBox("تذكر المستخدم")
         self.remember_check.setStyleSheet(f"color: {ThemeManager.get('text_secondary')};")
@@ -75,7 +71,6 @@ class LoginDialog(FramelessDialog):
         layout.addWidget(self.error_label)
         layout.addSpacing(10)
 
-        # زر تسجيل الدخول
         self.login_btn = QPushButton(translate('login'))
         self.login_btn.setObjectName("primary")
         self.login_btn.setMinimumHeight(45)
@@ -96,7 +91,6 @@ class LoginDialog(FramelessDialog):
         self.login_btn.clicked.connect(self._do_login)
         layout.addWidget(self.login_btn)
 
-        # زر تبديل الحساب
         switch_btn = QPushButton("🔄 تبديل الحساب / مسح البيانات")
         switch_btn.setStyleSheet(f"background-color: transparent; color: {ThemeManager.get('text_muted')}; border: none; font-size: 12px;")
         switch_btn.clicked.connect(self._switch_account)
@@ -174,9 +168,17 @@ class LoginDialog(FramelessDialog):
             self.password_edit.setFocus()
 
     def showEvent(self, event):
-        self.center()
+        self.center_on_parent()
         super().showEvent(event)
 
-    def center(self):
-        screen = self.screen().geometry()
-        self.move((screen.width() - self.width()) // 2, (screen.height() - self.height()) // 2)
+    def center_on_parent(self):
+        parent = self.parent()
+        if parent and parent.isVisible():
+            geo = parent.geometry()
+            x = geo.x() + (geo.width() - self.width()) // 2
+            y = geo.y() + (geo.height() - self.height()) // 2
+            self.move(x, y)
+        else:
+            screen = self.screen().geometry()
+            self.move((screen.width() - self.width()) // 2,
+                      (screen.height() - self.height()) // 2)

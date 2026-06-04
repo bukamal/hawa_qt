@@ -243,7 +243,7 @@ class MainWindow(QMainWindow):
         if reply == QMessageBox.Yes:
             UserSession.logout()
             self.hide()
-            login = LoginDialog()
+            login = LoginDialog(self)
             if login.exec() == LoginDialog.Accepted:
                 self.refresh_pages_after_login()
                 self.show()
@@ -307,3 +307,4 @@ class MainWindow(QMainWindow):
     def apply_theme(self, theme):
         ThemeManager.apply_theme(theme)
         self.apply_theme_to_pages()
+
