@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html dir="rtl" lang="ar">
+<head><meta charset="UTF-8"><title>{{TITLE}}</title>
+<style>
+    @page { size: {{PAPER_SIZE}} {{ORIENTATION}}; margin: 1.5cm; }
+    body { font-family: 'Tajawal', 'Segoe UI', 'Tahoma', Arial; direction: rtl; text-align: right; margin: 0; padding: 0; background: white; color: #1e293b; }
+    .header { text-align: center; margin-bottom: 20px; border-bottom: 3px solid #4f46e5; padding-bottom: 15px; }
+    .logo { max-width: 80px; max-height: 80px; margin-bottom: 10px; }
+    .company-name { font-size: 24px; font-weight: bold; }
+    .company-details { font-size: 12px; color: #64748b; }
+    .report-title { font-size: 20px; font-weight: bold; margin: 15px 0; color: #4f46e5; }
+    .report-date { font-size: 12px; color: #64748b; margin-bottom: 20px; }
+    .data-table { width: 100%; border-collapse: collapse; margin: 20px 0; font-size: 13px; direction: rtl; }
+    .data-table th { background: #f1f5f9; padding: 12px 8px; border: 1px solid #e2e8f0; text-align: center; }
+    .data-table td { padding: 10px 8px; border: 1px solid #e2e8f0; text-align: right; }
+    .data-table td.numeric { text-align: center; }
+    .data-table tr:nth-child(even) { background: #f8fafc; }
+    .footer { margin-top: 30px; text-align: center; font-size: 11px; color: #94a3b8; border-top: 1px solid #e2e8f0; padding-top: 15px; }
+</style>
+</head>
+<body>
+<div class="header">{{LOGO_HTML}}<div class="company-name">{{COMPANY_NAME}}</div><div class="company-details">{{COMPANY_ADDRESS}}<br>هاتف: {{COMPANY_PHONE}} | بريد: {{COMPANY_EMAIL}}</div><div class="report-title">{{TITLE}}</div><div class="report-date">التاريخ: {{DATE}}</div></div>
+<table class="data-table"><thead><tr>{{TABLE_HEADERS}}</tr></thead><tbody>{{TABLE_ROWS}}</tbody></table>
+<div class="footer">{{FOOTER_TEXT}}</div>
+</body></html>
