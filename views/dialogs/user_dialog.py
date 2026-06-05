@@ -94,4 +94,3 @@ class UserDialog(CenteredDialog):
     def change_password(self):
         dlg = ChangePasswordDialog(self, user_id=self.user_id)
         dlg.exec()
-

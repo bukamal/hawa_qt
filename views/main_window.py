@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 from PyQt5.QtWidgets import QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QStackedWidget, QPushButton, QLabel, QFrame, QMessageBox, QApplication
-from PyQt5.QtCore import Qt, QPoint, QPropertyAnimation, QTimer
+from PyQt5.QtCore import Qt, QPoint, QPropertyAnimation, QTimer, pyqtSignal
 from PyQt5.QtGui import QIcon
 import qtawesome as qta
 import requests
@@ -18,6 +18,9 @@ from views.login_dialog import LoginDialog
 from views.custom_table_view import CustomTableView
 
 class MainWindow(QMainWindow):
+    # إضافة إشارة للتحريك
+    window_moved = pyqtSignal()
+
     def __init__(self):
         super().__init__()
         self.setWindowFlags(Qt.FramelessWindowHint)
@@ -242,10 +245,14 @@ class MainWindow(QMainWindow):
         if event.button() == Qt.LeftButton:
             self.drag_pos = event.globalPos() - self.frameGeometry().topLeft()
             event.accept()
+
     def _mouse_move(self, event):
         if event.buttons() == Qt.LeftButton and self.drag_pos:
             self.move(event.globalPos() - self.drag_pos)
+            # إطلاق الإشارة عند تحريك النافذة
+            self.window_moved.emit()
             event.accept()
+
     def _mouse_release(self, event):
         self.drag_pos = None
 
@@ -283,7 +290,7 @@ class MainWindow(QMainWindow):
                     print(f"Logout error: {e}")
             UserSession.logout()
             self.hide()
-            login = LoginDialog(self)
+            login = LoginDialog(self)  # تمرير parent
             if login.exec() == LoginDialog.Accepted:
                 self.refresh_pages_after_login()
                 self.show()

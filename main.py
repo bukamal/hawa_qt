@@ -173,9 +173,7 @@ def main():
         os.environ['HAWAA_MODE'] = 'server'
     elif mode == "client":
         os.environ['HAWAA_MODE'] = 'client'
-        # التحقق من الاتصال بالخادم
         if not test_server_connection(server_url):
-            # لا نعرض خيار التحويل إلى محلي؛ نفتح إعدادات الشبكة مباشرة
             QMessageBox.critical(None, "خطأ في الاتصال",
                                  f"لا يمكن الاتصال بالخادم المحدد:\n{server_url}\n\n"
                                  "سيتم فتح إعدادات الشبكة لتعديل العنوان.")
@@ -196,7 +194,8 @@ def main():
     if not activated:
         old_splash = splash
         splash.hide()
-        dlg = ActivationDialog()
+        # تمرير النافذة الأم (splash) إلى ActivationDialog
+        dlg = ActivationDialog(old_splash)
         if dlg.exec() != ActivationDialog.Accepted:
             old_splash.close()
             sys.exit(0)
@@ -208,7 +207,8 @@ def main():
     start_license_checker(24, on_license_invalid)
 
     splash.set_progress(60, "تسجيل الدخول...")
-    login = LoginDialog()
+    # تمرير النافذة الأم (splash) إلى LoginDialog
+    login = LoginDialog(splash)
     splash.hide()
     if login.exec() != LoginDialog.Accepted:
         stop_license_checker()
@@ -217,7 +217,7 @@ def main():
     if UserSession.force_password_change():
         from views.dialogs.change_password_dialog import ChangePasswordDialog
         from database import UserRepository
-        dlg = ChangePasswordDialog()
+        dlg = ChangePasswordDialog()  # سيتم تمرير parent لاحقاً من MainWindow
         if dlg.exec():
             repo = UserRepository()
             repo.set_force_password_change(UserSession.get_current()['id'], False)

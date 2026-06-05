@@ -1,5 +1,5 @@
 from PyQt5.QtWidgets import QFormLayout, QLineEdit, QDoubleSpinBox, QDateEdit, QTextEdit, QComboBox, QPushButton, QHBoxLayout, QVBoxLayout, QMessageBox, QLabel
-from PyQt5.QtCore import QDate, QSettings
+from PyQt5.QtCore import QDate, QSettings, Qt  # أضفنا Qt هنا
 from database import ExpenseRepository
 from auth.session import UserSession
 from i18n.translator import translate
@@ -19,6 +19,7 @@ class AddEditExpenseDialog(CenteredDialog):
         layout.setContentsMargins(20,20,20,20)
         
         form = QFormLayout()
+        form.setLabelAlignment(Qt.AlignRight)  # الآن Qt معرف
         
         self.company_edit = QLineEdit()
         if self.predefined_company:

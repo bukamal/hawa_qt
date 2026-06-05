@@ -373,6 +373,8 @@ class SettingsWidget(QWidget):
         qsettings = QSettings("Hawaa", "Accounting")
         qsettings.setValue("network/mode", mode)
         qsettings.setValue("network/server_url", self.server_url_edit.text())
+        # مسح الكاش لأن تغيير وضع الشبكة يؤثر على الإعدادات
+        self.repo.clear_cache()
         if mode == 'server':
             try:
                 resp = requests.get("http://localhost:8000/health", timeout=1)
@@ -567,6 +569,8 @@ class SettingsWidget(QWidget):
                 if was_running:
                     self._start_backend_server()
                 self.load_rates_table()
+                # مسح الكاش بعد تغيير قاعدة البيانات
+                self.repo.clear_cache()
                 QMessageBox.information(self, "تنبيه", "يرجى إعادة تشغيل التطبيق لتحديث جميع المكونات.")
 
     def reset_database(self):
@@ -604,6 +608,7 @@ class SettingsWidget(QWidget):
             if was_running:
                 self._start_backend_server()
             self.load_rates_table()
+            self.repo.clear_cache()
             QMessageBox.information(self, "تنبيه", "يرجى إعادة تشغيل التطبيق لتحديث جميع المكونات.")
 
     # دوال إيقاف/تشغيل الخادم الخلفي
@@ -708,6 +713,8 @@ class SettingsWidget(QWidget):
                 QMessageBox.warning(self, "خطأ", f"سعر غير صالح للعملة {code}: {rate_text}")
                 return
 
+        # مسح الكاش بعد تغيير إعدادات العملة
+        self.repo.clear_cache()
         QMessageBox.information(self, translate('success'), "تم حفظ إعدادات العملة وأسعار الصرف")
         main_window = self.window()
         if hasattr(main_window, 'apply_theme_to_pages'):
@@ -740,12 +747,16 @@ class SettingsWidget(QWidget):
         lang_map = {0: 'ar', 1: 'en', 2: 'fr'}
         new_lang = lang_map[self.lang_combo.currentIndex()]
         self.repo.set('language', new_lang)
+        # مسح الكاش بعد تغيير اللغة
+        self.repo.clear_cache()
         set_language(new_lang)
         QMessageBox.information(self, translate('success'), "سيتم تطبيق اللغة بعد إعادة التشغيل")
 
     def save_theme(self):
         theme = 'light' if self.theme_combo.currentIndex() == 0 else 'dark'
         self.repo.set('theme', theme)
+        # مسح الكاش بعد تغيير الثيم
+        self.repo.clear_cache()
         main_window = self.window()
         if hasattr(main_window, 'apply_theme'):
             main_window.apply_theme(theme)
@@ -765,4 +776,6 @@ class SettingsWidget(QWidget):
             'logo_path': self.company_logo_path_edit.text(),
         }
         save_company_info(info)
+        # مسح الكاش بعد تغيير معلومات الشركة (إذا تم استخدامها في أي مكان)
+        self.repo.clear_cache()
         QMessageBox.information(self, "نجاح", "تم حفظ معلومات الشركة")

@@ -1,5 +1,5 @@
 from PyQt5.QtWidgets import QDialog, QHBoxLayout, QVBoxLayout, QPushButton, QLabel, QFrame, QWidget, QApplication
-from PyQt5.QtCore import Qt, QPoint, QPropertyAnimation, QEasingCurve
+from PyQt5.QtCore import Qt, QPoint, QPropertyAnimation, QEasingCurve, QTimer
 import qtawesome as qta
 from theme_manager import ThemeManager
 
@@ -9,7 +9,8 @@ class FramelessDialog(QDialog):
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.Dialog)
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setModal(True)
-        self.setLayoutDirection(Qt.LeftToRight)
+        # RTL
+        self.setLayoutDirection(Qt.RightToLeft)
         self.drag_pos = None
         
         self.main_frame = QFrame(self)
@@ -64,7 +65,6 @@ class FramelessDialog(QDialog):
         title_layout.addWidget(self.min_btn)
         
         self.content_widget = QWidget()
-        self.content_widget.setStyleSheet(f"background-color: {ThemeManager.get('bg_window')};")
         
         container_layout = QVBoxLayout(self.main_frame)
         container_layout.setContentsMargins(0, 0, 0, 0)
@@ -77,6 +77,12 @@ class FramelessDialog(QDialog):
         self.title_bar.mouseReleaseEvent = self._mouse_release
         
         self.setStyleSheet(ThemeManager.get_stylesheet())
+        
+        # مؤقت للتحقق الدوري من موقع النافذة الرئيسية (حل احتياطي)
+        self._position_timer = QTimer(self)
+        self._position_timer.timeout.connect(self._check_main_window_position)
+        self._position_timer.start(150)
+        self._last_main_window_pos = None
     
     def _mouse_press(self, event):
         if event.button() == Qt.LeftButton:
@@ -105,20 +111,22 @@ class FramelessDialog(QDialog):
         anim.start()
         self.animation = anim
     
-    def showEvent(self, event):
-        """التمركز على النافذة الأم عند الظهور"""
-        super().showEvent(event)
-        self._center_on_parent()
+    def _check_main_window_position(self):
+        main_window = self.window()
+        if main_window and main_window != self and main_window.isVisible() and not self.isHidden():
+            current_pos = main_window.pos()
+            if self._last_main_window_pos != current_pos:
+                self._last_main_window_pos = current_pos
+                self._center_on_main_window()
     
-    def _center_on_parent(self):
-        """تمركز الحوار على نافذته الأم"""
-        parent = self.parent()
-        if parent and parent.isVisible():
-            parent_geo = parent.geometry()
-            parent_center = parent_geo.center()
+    def _center_on_main_window(self):
+        main_window = self.window()
+        if main_window and main_window != self and main_window.isVisible():
+            main_geo = main_window.geometry()
+            main_center = main_geo.center()
             dialog_geo = self.geometry()
-            x = parent_center.x() - dialog_geo.width() // 2
-            y = parent_center.y() - dialog_geo.height() // 2
+            x = main_center.x() - dialog_geo.width() // 2
+            y = main_center.y() - dialog_geo.height() // 2
             screen = self.screen().geometry()
             x = max(screen.left(), min(x, screen.right() - dialog_geo.width()))
             y = max(screen.top(), min(y, screen.bottom() - dialog_geo.height()))
@@ -129,9 +137,15 @@ class FramelessDialog(QDialog):
             y = (screen.height() - self.height()) // 2
             self.move(x, y)
     
+    def showEvent(self, event):
+        super().showEvent(event)
+        main_window = self.window()
+        if main_window and main_window != self and hasattr(main_window, 'window_moved'):
+            main_window.window_moved.connect(self._center_on_main_window)
+        self._center_on_main_window()
+    
     def exec(self):
         return super().exec()
     
     def exec_(self):
         return self.exec()
-

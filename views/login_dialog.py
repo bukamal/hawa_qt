@@ -12,9 +12,11 @@ from theme_manager import ThemeManager
 class LoginDialog(FramelessDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
+        # تأكيد RTL
+        self.setLayoutDirection(Qt.RightToLeft)
         self.setWindowTitle(translate('login'))
-        self.resize(480, 520)
-        self.setMinimumSize(420, 480)
+        self.resize(480, 600)
+        self.setMinimumSize(420, 520)
         self.settings = QSettings("Hawaa", "Accounting")
         self.user_repo = UserRepository()
         self.db_conn = DatabaseConnection()

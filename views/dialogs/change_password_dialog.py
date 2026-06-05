@@ -12,7 +12,7 @@ class ChangePasswordDialog(FramelessDialog):
         self.setLayoutDirection(Qt.RightToLeft)
         self.user_id = user_id or (UserSession.get_current()['id'] if UserSession.get_current() else None)
         self.setWindowTitle(translate('change_password'))
-        self.resize(450, 300)
+        self.resize(450, 400)
         layout = QVBoxLayout(self.content_widget)
         layout.setSpacing(16)
         layout.setContentsMargins(20, 20, 20, 20)

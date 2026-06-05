@@ -2,11 +2,26 @@
 from database.repositories.base_repo import BaseRepository
 
 class SettingsRepository(BaseRepository):
+    def __init__(self):
+        super().__init__()
+        self._cache = {}
+    
     def get(self, key: str, default=None):
-        return self.db.get_setting(key, default)
+        # استخدام الكاش إذا كان موجوداً
+        if key in self._cache:
+            return self._cache[key]
+        value = self.db.get_setting(key, default)
+        self._cache[key] = value
+        return value
     
     def set(self, key: str, value: str):
         self.db.set_setting(key, value)
+        # مسح الكاش لهذا المفتاح فقط
+        self._cache.pop(key, None)
+    
+    def clear_cache(self):
+        """مسح كامل الكاش (يُستخدم عند تغيير إعدادات متعددة)"""
+        self._cache.clear()
     
     def get_currency_settings(self):
         return {
