@@ -7,7 +7,7 @@ from auth.password import hash_password
 
 def init_database():
     db = DatabaseConnection()
-    if db._use_http():
+    if db.is_remote():
         print("⚠️ وضع العميل: قاعدة البيانات على الخادم، لا حاجة لإنشاء محلي.")
         return
 
@@ -116,7 +116,7 @@ def init_database():
 
 def ensure_db():
     db = DatabaseConnection()
-    if db._use_http():
+    if db.is_remote():
         return
     if not os.path.exists(DB_PATH):
         init_database()

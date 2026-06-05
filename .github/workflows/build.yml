@@ -31,6 +31,7 @@ jobs:
     - name: Build with PyInstaller (OneDir, no console)
       run: |
         pyinstaller --collect-all PyQt5 --collect-all PyQtWebEngine `
+          --collect-all flask --collect-all flask_jwt_extended `
           --hidden-import decimal --hidden-import sqlite3 `
           --add-data "${{ steps.qtpath.outputs.platforms_path }};platforms" `
           --onedir --windowed --name HawaaSham main.py

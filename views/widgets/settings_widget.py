@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QSpinBox, QComboBox,
     QPushButton, QMessageBox, QGroupBox, QTableWidget, QTableWidgetItem,
@@ -42,7 +43,6 @@ class SettingsWidget(QWidget):
         layout.addWidget(self.tabs)
         self.load_rates_table()
 
-    # ---------- تبويب العملات ----------
     def create_currency_tab(self):
         tab = QWidget()
         tab.setLayoutDirection(Qt.RightToLeft)
@@ -85,7 +85,6 @@ class SettingsWidget(QWidget):
         layout.addStretch()
         return tab
 
-    # ---------- تبويب أسعار الصرف ----------
     def create_rates_tab(self):
         tab = QWidget()
         tab.setLayoutDirection(Qt.RightToLeft)
@@ -107,7 +106,6 @@ class SettingsWidget(QWidget):
         layout.addStretch()
         return tab
 
-    # ---------- تبويب معلومات الشركة ----------
     def create_company_tab(self):
         tab = QWidget()
         tab.setLayoutDirection(Qt.RightToLeft)
@@ -144,7 +142,6 @@ class SettingsWidget(QWidget):
         layout.addStretch()
         return tab
 
-    # ---------- تبويب اللغة والمظهر ----------
     def create_lang_theme_tab(self):
         tab = QWidget()
         tab.setLayoutDirection(Qt.RightToLeft)
@@ -182,7 +179,6 @@ class SettingsWidget(QWidget):
         layout.addStretch()
         return tab
 
-    # ---------- تبويب الشبكة ----------
     def create_network_tab(self):
         tab = QWidget()
         tab.setLayoutDirection(Qt.RightToLeft)
@@ -191,15 +187,20 @@ class SettingsWidget(QWidget):
         form = QFormLayout()
         form.setLabelAlignment(Qt.AlignRight)
 
-        self.is_server_check = QCheckBox("تشغيل هذا الجهاز كخادم قاعدة بيانات مركزي")
-        self.is_server_check.toggled.connect(self.on_server_toggled)
-        form.addRow(self.is_server_check)
+        self.mode_combo = QComboBox()
+        self.mode_combo.addItems(["محلي (بدون شبكة)", "عميل (اتصال بخادم)", "خادم (تشغيل خدمة)"])
+        current_mode = self.repo.get('network_mode', 'local')
+        mode_idx = {'local': 0, 'client': 1, 'server': 2}
+        self.mode_combo.setCurrentIndex(mode_idx.get(current_mode, 0))
+        self.mode_combo.currentIndexChanged.connect(self.on_mode_changed)
+        form.addRow("وضع التشغيل:", self.mode_combo)
 
         self.server_url_edit = QLineEdit()
         self.server_url_edit.setPlaceholderText("http://192.168.1.100:8000")
+        server_url = self.repo.get('network_server_url', 'http://localhost:8000')
+        self.server_url_edit.setText(server_url)
         form.addRow("عنوان الخادم البعيد:", self.server_url_edit)
 
-        # زر اختبار الاتصال
         self.test_btn = QPushButton("🔍 اختبار الاتصال")
         self.test_btn.clicked.connect(self.test_connection)
         form.addRow(self.test_btn)
@@ -212,18 +213,15 @@ class SettingsWidget(QWidget):
         layout.addWidget(group)
         layout.addStretch()
 
-        settings = QSettings("Hawaa", "Accounting")
-        is_server = settings.value("network/is_server", False, type=bool)
-        self.is_server_check.setChecked(is_server)
-        self.server_url_edit.setText(settings.value("network/server_url", "http://localhost:8000"))
-        self.on_server_toggled(is_server)
+        self.on_mode_changed()
         return tab
 
-    def on_server_toggled(self, checked):
-        self.server_url_edit.setEnabled(not checked)
+    def on_mode_changed(self):
+        is_client = self.mode_combo.currentIndex() == 1
+        self.server_url_edit.setEnabled(is_client)
+        self.test_btn.setEnabled(is_client)
 
     def test_connection(self):
-        """اختبار الاتصال بالخادم البعيد"""
         url = self.server_url_edit.text().strip()
         if not url:
             QMessageBox.warning(self, "تنبيه", "يرجى إدخال عنوان الخادم")
@@ -235,19 +233,17 @@ class SettingsWidget(QWidget):
             if resp.status_code == 200 and resp.json().get("status") == "alive":
                 QMessageBox.information(self, "✅ نجاح", f"تم الاتصال بالخادم بنجاح\nالعنوان: {url}")
             else:
-                QMessageBox.warning(self, "❌ فشل", f"الخادم لا يستجيب بشكل صحيح\nالعنوان: {url}\nالاستجابة: {resp.text[:100]}")
-        except requests.exceptions.ConnectionError:
-            QMessageBox.critical(self, "خطأ في الاتصال", f"لا يمكن الوصول إلى الخادم:\n{url}\n\nتأكد من:\n- أن الخادم قيد التشغيل\n- أن الجهازين على نفس الشبكة\n- أن جدار الحماية يسمح بالاتصال")
+                QMessageBox.warning(self, "❌ فشل", f"الخادم لا يستجيب بشكل صحيح\nالعنوان: {url}")
         except Exception as e:
-            QMessageBox.critical(self, "خطأ", f"حدث خطأ: {str(e)}")
+            QMessageBox.critical(self, "خطأ", f"لا يمكن الاتصال بالخادم:\n{url}\n\n{str(e)}")
 
     def save_network_settings(self):
-        settings = QSettings("Hawaa", "Accounting")
-        settings.setValue("network/is_server", self.is_server_check.isChecked())
-        settings.setValue("network/server_url", self.server_url_edit.text())
+        mode_map = {0: 'local', 1: 'client', 2: 'server'}
+        mode = mode_map[self.mode_combo.currentIndex()]
+        self.repo.set('network_mode', mode)
+        self.repo.set('network_server_url', self.server_url_edit.text())
         QMessageBox.information(self, "نجاح", "سيتم تطبيق الإعدادات بعد إعادة تشغيل التطبيق")
 
-    # ---------- تبويب النسخ الاحتياطي والصيانة ----------
     def create_backup_tab(self):
         tab = QWidget()
         tab.setLayoutDirection(Qt.RightToLeft)
@@ -318,50 +314,36 @@ class SettingsWidget(QWidget):
 
         layout.addStretch()
 
-        # تعطيل عناصر النسخ الاحتياطي إذا كنا في وضع العميل
-        self._disable_backup_controls(periodic_group)
-        self._disable_backup_controls(instant_group)
-        self._disable_backup_controls(manage_group)
+        # تعطيل عناصر النسخ الاحتياطي في وضع العميل (اختياري)
+        from database.connection import DatabaseConnection
+        if DatabaseConnection().is_remote():
+            self._disable_backup_controls(periodic_group)
+            self._disable_backup_controls(instant_group)
+            self._disable_backup_controls(manage_group)
 
         self.load_backup_settings()
         self.update_license_status()
         return tab
 
     def _disable_backup_controls(self, container):
-        """تعطيل جميع عناصر التحكم في النسخ الاحتياطي عند وضع العميل وإظهار رسالة"""
-        if self._is_remote_client():
-            for child in container.findChildren(QPushButton):
-                child.setEnabled(False)
-            for child in container.findChildren(QCheckBox):
-                child.setEnabled(False)
-            for child in container.findChildren(QSpinBox):
-                child.setEnabled(False)
-            for child in container.findChildren(QLineEdit):
-                child.setEnabled(False)
-            # إضافة ملصق توضيحي في أعلى التبويب إذا لم يكن موجودًا
-            if not hasattr(self, '_backup_warning_label'):
-                label = QLabel("⚠️ أنت متصل بخادم بعيد. يتم إجراء النسخ الاحتياطي مركزيًا على الخادم. لا حاجة لنسخ احتياطي محلي.")
-                label.setStyleSheet("color: orange; font-weight: bold; margin: 10px;")
-                label.setWordWrap(True)
-                # نضيفه في بداية layout التبويب (أعلى كل شيء)
-                parent_layout = container.parentWidget().layout()
-                if parent_layout:
-                    parent_layout.insertWidget(0, label)
-                self._backup_warning_label = label
-
-    # ---------- دوال النسخ الاحتياطي ----------
-    def _is_remote_client(self):
-        from database.connection import DatabaseConnection
-        db = DatabaseConnection()
-        return db._use_http()
-
-    def _select_backup_folder(self, line_edit):
-        folder = QFileDialog.getExistingDirectory(self, "اختر مجلد النسخ الاحتياطي")
-        if folder:
-            line_edit.setText(folder)
+        for child in container.findChildren(QPushButton):
+            child.setEnabled(False)
+        for child in container.findChildren(QCheckBox):
+            child.setEnabled(False)
+        for child in container.findChildren(QSpinBox):
+            child.setEnabled(False)
+        for child in container.findChildren(QLineEdit):
+            child.setEnabled(False)
+        if not hasattr(self, '_backup_warning_label'):
+            label = QLabel("⚠️ أنت متصل بخادم بعيد. يتم إجراء النسخ الاحتياطي مركزيًا على الخادم.")
+            label.setStyleSheet("color: orange; font-weight: bold; margin: 10px;")
+            label.setWordWrap(True)
+            container.parentWidget().layout().insertWidget(0, label)
+            self._backup_warning_label = label
 
     def save_backup_settings(self):
-        if self._is_remote_client():
+        from database.connection import DatabaseConnection
+        if DatabaseConnection().is_remote():
             QMessageBox.warning(self, "تنبيه", "لا يمكن حفظ إعدادات النسخ الاحتياطي في وضع العميل.")
             return
         settings = QSettings("Hawaa", "Accounting")
@@ -378,8 +360,9 @@ class SettingsWidget(QWidget):
         self.backup_folder.setText(settings.value("backup/folder", ""))
 
     def create_backup_now(self):
-        if self._is_remote_client():
-            QMessageBox.warning(self, "تنبيه", "لا يمكن إنشاء نسخة احتياطية من جهاز عميل. يرجى تنفيذ هذه العملية على جهاز الخادم.")
+        from database.connection import DatabaseConnection
+        if DatabaseConnection().is_remote():
+            QMessageBox.warning(self, "تنبيه", "لا يمكن إنشاء نسخة احتياطية من جهاز عميل.")
             return
         from database.connection import DB_PATH
         folder = self.backup_folder.text().strip()
@@ -398,8 +381,9 @@ class SettingsWidget(QWidget):
             QMessageBox.critical(self, "خطأ", f"فشل النسخ الاحتياطي: {str(e)}")
 
     def export_database(self):
-        if self._is_remote_client():
-            QMessageBox.warning(self, "تنبيه", "أنت متصل بخادم بعيد. عملية التصدير تؤثر فقط على قاعدة البيانات المحلية (غير مستخدمة). يرجى تصدير البيانات من الخادم مباشرة.")
+        from database.connection import DatabaseConnection
+        if DatabaseConnection().is_remote():
+            QMessageBox.warning(self, "تنبيه", "لا يمكن تصدير قاعدة البيانات في وضع العميل.")
             return
         from database.connection import DB_PATH
         filename, _ = QFileDialog.getSaveFileName(self, "تصدير قاعدة البيانات", "hawaa_data_backup.db", "SQLite (*.db)")
@@ -409,13 +393,14 @@ class SettingsWidget(QWidget):
                     shutil.copy2(DB_PATH, filename)
                     QMessageBox.information(self, "نجاح", f"تم التصدير إلى:\n{filename}")
                 else:
-                    QMessageBox.warning(self, "تنبيه", "لا توجد قاعدة بيانات محلية للتصدير (أنت في وضع عميل).")
+                    QMessageBox.warning(self, "تنبيه", "لا توجد قاعدة بيانات محلية للتصدير")
             except Exception as e:
                 QMessageBox.critical(self, "خطأ", f"فشل التصدير: {str(e)}")
 
     def import_database(self):
-        if self._is_remote_client():
-            QMessageBox.warning(self, "تنبيه", "لا يمكن استيراد قاعدة بيانات من جهاز عميل. يرجى تنفيذ هذه العملية على جهاز الخادم.")
+        from database.connection import DatabaseConnection
+        if DatabaseConnection().is_remote():
+            QMessageBox.warning(self, "تنبيه", "لا يمكن استيراد قاعدة البيانات في وضع العميل.")
             return
         from database.connection import DB_PATH
         filename, _ = QFileDialog.getOpenFileName(self, "استيراد قاعدة البيانات", "", "SQLite (*.db)")
@@ -430,8 +415,9 @@ class SettingsWidget(QWidget):
                     QMessageBox.critical(self, "خطأ", f"فشل الاستيراد: {str(e)}")
 
     def reset_database(self):
-        if self._is_remote_client():
-            QMessageBox.warning(self, "تنبيه", "لا يمكن إعادة تهيئة قاعدة البيانات من جهاز عميل. يرجى تنفيذ هذه العملية على جهاز الخادم.")
+        from database.connection import DatabaseConnection
+        if DatabaseConnection().is_remote():
+            QMessageBox.warning(self, "تنبيه", "لا يمكن إعادة تهيئة قاعدة البيانات في وضع العميل.")
             return
         from database.connection import DB_PATH
         reply = QMessageBox.question(self, "تأكيد خطير", "سيتم حذف كل البيانات وإعادة تهيئة قاعدة البيانات المحلية.\nلا يمكن التراجع. متابعة؟",
@@ -463,7 +449,6 @@ class SettingsWidget(QWidget):
             self.update_license_status()
             QMessageBox.information(self, "نجاح", "تم التفعيل بنجاح")
 
-    # ---------- الدوال المساعدة الأخرى ----------
     def load_rates_table(self):
         rates = currency.get_all_currencies()
         self.rates_table.setRowCount(len(rates))

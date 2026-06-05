@@ -31,10 +31,9 @@ def on_license_invalid():
         sys.exit(1)
     QTimer.singleShot(0, show)
 
-def run_server():
-    from server import create_server
-    server = create_server()
-    server.serve_forever()
+def run_flask_server():
+    from flask_server import app
+    app.run(host='0.0.0.0', port=8000, threaded=True, debug=False, use_reloader=False)
 
 def periodic_backup_worker(interval_seconds, folder, db_path):
     global _backup_stop_event
@@ -53,8 +52,8 @@ def start_periodic_backup():
     global _backup_stop_event, _backup_thread
     from database.connection import DatabaseConnection
     db = DatabaseConnection()
-    if db._use_http():
-        print("⚠️ النسخ الاحتياطي الدوري معطل في وضع العميل (يتم على الخادم فقط)")
+    if db.is_remote():
+        print("⚠️ النسخ الاحتياطي الدوري معطل في وضع العميل")
         return None
 
     settings = QSettings("Hawaa", "Accounting")
@@ -102,54 +101,53 @@ def main():
     enable_auto_select_all(app)
 
     settings = QSettings("Hawaa", "Accounting")
-    is_server = settings.value("network/is_server", False, type=bool)
-    server_url = settings.value("network/server_url", "http://localhost:8000")
+    
+    # قراءة وضع الشبكة من الإعدادات
+    from database.connection import DatabaseConnection
+    db_conn = DatabaseConnection()  # يقرأ الوضع من QSettings
+    mode = db_conn.mode  # local, client, server
+    server_url = db_conn.server_url
 
-    if is_server:
-        server_thread = threading.Thread(target=run_server, daemon=True)
+    if mode == "server":
+        # تشغيل خادم Flask في thread منفصل
+        server_thread = threading.Thread(target=run_flask_server, daemon=True)
         server_thread.start()
-        time.sleep(1)
-        os.environ['HAWAA_SERVER'] = 'http://localhost:8000'
-    else:
-        use_local = False
-        if server_url and server_url != "http://localhost:8000":
-            if not test_server_connection(server_url):
-                reply = QMessageBox.question(None, "تحذير الاتصال بالخادم",
-                    f"لا يمكن الاتصال بالخادم المحدد:\n{server_url}\n\n"
-                    "قد تكون الأسباب:\n"
-                    "- الخادم ليس قيد التشغيل\n"
-                    "- الجهازان ليسا على نفس الشبكة\n"
-                    "- جدار الحماية يمنع الاتصال\n\n"
-                    "هل تريد المتابعة باستخدام قاعدة البيانات المحلية؟\n"
-                    "(اختر 'لا' لفتح إعدادات الشبكة وتعديل العنوان)",
-                    QMessageBox.Yes | QMessageBox.No,
-                    QMessageBox.No)
-                if reply == QMessageBox.No:
-                    # فتح نافذة الإعدادات كحوار
-                    from views.widgets.settings_widget import SettingsWidget
-                    dialog = QDialog()
-                    dialog.setWindowTitle("إعدادات الشبكة")
-                    dialog.setLayoutDirection(Qt.RightToLeft)
-                    dialog.resize(600, 500)
-                    layout = QVBoxLayout(dialog)
-                    settings_widget = SettingsWidget(dialog)
-                    layout.addWidget(settings_widget)
-                    # إضافة أزرار موافق/إلغاء
-                    button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-                    button_box.accepted.connect(dialog.accept)
-                    button_box.rejected.connect(dialog.reject)
-                    layout.addWidget(button_box)
-                    if dialog.exec() == QDialog.Accepted:
-                        QMessageBox.information(None, "تم الحفظ", "سيتم إعادة تشغيل التطبيق لتطبيق الإعدادات.")
-                    sys.exit(0)  # الخروج لأن الإعدادات قد تغيرت
-                else:
-                    use_local = True
-                    QMessageBox.information(None, "تنبيه",
-                        "سيتم استخدام قاعدة البيانات المحلية. لن تتم مشاركة البيانات مع الأجهزة الأخرى.")
-        if use_local:
-            os.environ['HAWAA_SERVER'] = ''
-        else:
-            os.environ['HAWAA_SERVER'] = server_url
+        time.sleep(2)  # انتظار بدء الخادم
+        # في وضع الخادم، التطبيق يعمل محلياً (لا يستخدم REST)
+        os.environ['HAWAA_MODE'] = 'server'
+    elif mode == "client":
+        os.environ['HAWAA_MODE'] = 'client'
+        # التحقق من الاتصال بالخادم
+        if not test_server_connection(server_url):
+            reply = QMessageBox.question(None, "تحذير الاتصال بالخادم",
+                f"لا يمكن الاتصال بالخادم المحدد:\n{server_url}\n\n"
+                "هل تريد المتابعة باستخدام قاعدة البيانات المحلية؟\n"
+                "(اختر 'لا' لفتح إعدادات الشبكة وتعديل العنوان)",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No)
+            if reply == QMessageBox.No:
+                from views.widgets.settings_widget import SettingsWidget
+                dialog = QDialog()
+                dialog.setWindowTitle("إعدادات الشبكة")
+                dialog.setLayoutDirection(Qt.RightToLeft)
+                dialog.resize(600, 500)
+                layout = QVBoxLayout(dialog)
+                settings_widget = SettingsWidget(dialog)
+                layout.addWidget(settings_widget)
+                button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+                button_box.accepted.connect(dialog.accept)
+                button_box.rejected.connect(dialog.reject)
+                layout.addWidget(button_box)
+                if dialog.exec() == QDialog.Accepted:
+                    QMessageBox.information(None, "تم الحفظ", "سيتم إعادة تشغيل التطبيق لتطبيق الإعدادات.")
+                sys.exit(0)
+            else:
+                # تبديل إلى الوضع المحلي
+                db_conn.mode = 'local'
+                os.environ['HAWAA_MODE'] = 'local'
+                QMessageBox.information(None, "تنبيه", "سيتم استخدام قاعدة البيانات المحلية.")
+    else:  # local
+        os.environ['HAWAA_MODE'] = 'local'
 
     ThemeManager.init_app(app)
 

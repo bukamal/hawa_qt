@@ -1,143 +1,180 @@
 # -*- coding: utf-8 -*-
 import sqlite3
-import requests
 import threading
 import os
-import sys
+from typing import List, Dict, Optional
+from PyQt5.QtCore import QSettings
 
-# تحديد مسار قاعدة البيانات المناسب حسب النظام
-def get_db_path():
-    if getattr(sys, 'frozen', False):
-        # إذا كان التطبيق مجمداً (PyInstaller)
-        base_dir = os.path.dirname(sys.executable)
-    else:
-        base_dir = os.path.dirname(os.path.dirname(__file__))
-    
-    # محاولة استخدام مجلد AppData على ويندوز، أو مجلد المستخدم على لينكس/ماك
-    if os.name == 'nt':  # Windows
+def get_local_db_path():
+    if os.name == 'nt':
         appdata = os.environ.get('APPDATA', os.path.expanduser('~\\AppData\\Roaming'))
         data_dir = os.path.join(appdata, 'Hawaa')
     else:
         data_dir = os.path.expanduser('~/.hawaa')
-    
-    try:
-        os.makedirs(data_dir, exist_ok=True)
-    except:
-        # إذا فشل الإنشاء، نستخدم المجلد المحلي (قد يكون مقيداً)
-        data_dir = base_dir
-    
+    os.makedirs(data_dir, exist_ok=True)
     return os.path.join(data_dir, 'hawaa_data.db')
 
-DB_PATH = get_db_path()
-
-SERVER_URL = os.environ.get('HAWAA_SERVER', '')
+LOCAL_DB_PATH = get_local_db_path()
 
 class DatabaseConnection:
     _instance = None
-    _local = threading.local()
+    _local_conn = None
 
     def __new__(cls):
         if cls._instance is None:
             cls._instance = super().__new__(cls)
+            cls._instance._init_mode()
         return cls._instance
 
-    def _use_http(self):
-        return SERVER_URL and SERVER_URL != ''
+    def _init_mode(self):
+        settings = QSettings("Hawaa", "Accounting")
+        self.mode = settings.value("network/mode", "local")  # local, client, server
+        self.server_url = settings.value("network/server_url", "http://localhost:8000")
+        self._rest_client = None
+        if self.mode == "client":
+            from database.connection_rest import RestClient
+            self._rest_client = RestClient(self.server_url)
+
+    def is_remote(self) -> bool:
+        return self.mode == "client"
+
+    def get_rest_client(self):
+        return self._rest_client
+
+    def set_token(self, token: str):
+        if self._rest_client:
+            self._rest_client.set_token(token)
 
     def get_connection(self):
-        if not self._use_http():
-            if not hasattr(self._local, 'conn') or self._local.conn is None:
-                os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
-                self._local.conn = sqlite3.connect(DB_PATH, isolation_level=None)
-                self._local.conn.row_factory = sqlite3.Row
-            return self._local.conn
+        if self.mode != "client":
+            if self._local_conn is None:
+                os.makedirs(os.path.dirname(LOCAL_DB_PATH), exist_ok=True)
+                self._local_conn = sqlite3.connect(LOCAL_DB_PATH, isolation_level=None)
+                self._local_conn.row_factory = sqlite3.Row
+            return self._local_conn
         else:
-            if not hasattr(self._local, 'conn_id'):
-                try:
-                    resp = requests.post(f"{SERVER_URL}/connect", timeout=5)
-                    if resp.status_code == 200:
-                        self._local.conn_id = resp.json()["connection_id"]
-                    else:
-                        raise Exception("فشل الاتصال بالخادم")
-                except Exception as e:
-                    raise Exception(f"لا يمكن الاتصال بخادم قاعدة البيانات: {e}")
-            return self._local
+            return None
 
-    def execute(self, sql, params=(), audit_data=None):
-        if not self._use_http():
+    def execute(self, sql: str, params=(), audit_data=None):
+        if self.mode != "client":
             conn = self.get_connection()
             return conn.execute(sql, params)
         else:
-            conn_id = self.get_connection().conn_id
-            payload = {
-                "connection_id": conn_id,
-                "sql": sql,
-                "params": list(params)
-            }
-            if audit_data:
-                payload["audit"] = audit_data
-            resp = requests.post(f"{SERVER_URL}/execute", json=payload)
-            if resp.status_code != 200:
-                raise Exception(f"خطأ في الخادم: {resp.text}")
-            data = resp.json()
-            if not data.get("success"):
-                raise Exception(data.get("error", "خطأ غير معروف"))
-            return MockCursor(data.get("rows"), data.get("rowcount"), data.get("lastrowid"))
-
-    def executemany(self, sql, params_list, audit_data=None):
-        if not self._use_http():
-            return self.get_connection().executemany(sql, params_list)
-        else:
-            for params in params_list:
-                self.execute(sql, params, audit_data)
-            return MockCursor(None, len(params_list), None)
+            raise NotImplementedError("Use REST client methods")
 
     def commit(self):
-        if not self._use_http():
+        if self.mode != "client":
             self.get_connection().commit()
-        else:
-            conn_id = self.get_connection().conn_id
-            requests.post(f"{SERVER_URL}/commit", params={"conn_id": conn_id})
 
     def rollback(self):
-        if not self._use_http():
+        if self.mode != "client":
             self.get_connection().rollback()
-        else:
-            conn_id = self.get_connection().conn_id
-            requests.post(f"{SERVER_URL}/rollback", params={"conn_id": conn_id})
 
     def close(self):
-        if not self._use_http():
-            if hasattr(self._local, 'conn') and self._local.conn:
-                self._local.conn.close()
-                self._local.conn = None
-        else:
-            if hasattr(self._local, 'conn_id'):
-                try:
-                    requests.post(f"{SERVER_URL}/disconnect", params={"conn_id": self._local.conn_id})
-                except:
-                    pass
-                del self._local.conn_id
+        if self._local_conn:
+            self._local_conn.close()
+            self._local_conn = None
 
-    def begin(self):
-        self.execute("BEGIN TRANSACTION")
+    # --- دوال CRUD موحدة ---
+    def get_expenses(self) -> List[Dict]:
+        if self.mode == "client":
+            return self._rest_client.get_expenses()
+        conn = self.get_connection()
+        rows = conn.execute("SELECT * FROM expenses ORDER BY id DESC").fetchall()
+        return [dict(row) for row in rows]
 
-class MockCursor:
-    def __init__(self, rows, rowcount, lastrowid):
-        self._rows = rows if rows is not None else []
-        self._index = 0
-        self.rowcount = rowcount
-        self.lastrowid = lastrowid
+    def add_expense(self, data: Dict) -> int:
+        if self.mode == "client":
+            return self._rest_client.add_expense(data)
+        conn = self.get_connection()
+        now = __import__('datetime').datetime.now().isoformat()
+        cursor = conn.execute('''
+            INSERT INTO expenses
+            (company_name, amount, type, date, notes, currency, created_by, created_at, updated_by, updated_at,
+             amount_original, currency_original, exchange_rate_to_usd)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            data['company_name'], data['amount'], data['type'], data['date'],
+            data.get('notes', ''), data['currency'], data.get('created_by', 1), now,
+            data.get('updated_by', 1), now,
+            data.get('amount_original', data['amount']),
+            data.get('currency_original', data['currency']),
+            data.get('exchange_rate_to_usd', 1.0)
+        ))
+        conn.commit()
+        return cursor.lastrowid
 
-    def fetchone(self):
-        if self._index < len(self._rows):
-            row = self._rows[self._index]
-            self._index += 1
-            return row
-        return None
+    def update_expense(self, expense_id: int, data: Dict):
+        if self.mode == "client":
+            self._rest_client.update_expense(expense_id, data)
+            return
+        conn = self.get_connection()
+        now = __import__('datetime').datetime.now().isoformat()
+        conn.execute('''
+            UPDATE expenses SET
+                company_name=?, amount=?, type=?, date=?, notes=?, currency=?,
+                updated_by=?, updated_at=?, amount_original=?, currency_original=?, exchange_rate_to_usd=?
+            WHERE id=?
+        ''', (
+            data['company_name'], data['amount'], data['type'], data['date'],
+            data.get('notes', ''), data['currency'], data.get('updated_by', 1), now,
+            data.get('amount_original', data['amount']),
+            data.get('currency_original', data['currency']),
+            data.get('exchange_rate_to_usd', 1.0),
+            expense_id
+        ))
+        conn.commit()
 
-    def fetchall(self):
-        return self._rows
+    def delete_expense(self, expense_id: int):
+        if self.mode == "client":
+            self._rest_client.delete_expense(expense_id)
+            return
+        conn = self.get_connection()
+        conn.execute("DELETE FROM expenses WHERE id = ?", (expense_id,))
+        conn.commit()
 
-    def close(self):
-        pass
+    def get_users(self) -> List[Dict]:
+        if self.mode == "client":
+            return self._rest_client.get_users()
+        conn = self.get_connection()
+        rows = conn.execute("SELECT id, username, full_name, role, created_at, last_login FROM users").fetchall()
+        return [dict(row) for row in rows]
+
+    def add_user(self, data: Dict) -> int:
+        if self.mode == "client":
+            return self._rest_client.add_user(data)
+        from auth.password import hash_password
+        pwd_hash, salt = hash_password(data['password'])
+        conn = self.get_connection()
+        now = __import__('datetime').datetime.now().isoformat()
+        cursor = conn.execute('''
+            INSERT INTO users (username, password_hash, salt, full_name, role, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+        ''', (data['username'], pwd_hash, salt, data.get('full_name', ''), data.get('role', 'user'), now))
+        conn.commit()
+        return cursor.lastrowid
+
+    def get_audit_log(self) -> List[Dict]:
+        if self.mode == "client":
+            return self._rest_client.get_audit_log()
+        conn = self.get_connection()
+        rows = conn.execute("SELECT * FROM audit_log ORDER BY id DESC LIMIT 2000").fetchall()
+        return [dict(row) for row in rows]
+
+    def get_setting(self, key: str, default=None):
+        if self.mode == "client":
+            val = self._rest_client.get_setting(key)
+            return val if val is not None else default
+        conn = self.get_connection()
+        row = conn.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
+        return row['value'] if row else default
+
+    def set_setting(self, key: str, value: str):
+        if self.mode == "client":
+            self._rest_client.set_setting(key, value)
+            return
+        conn = self.get_connection()
+        conn.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, value))
+        conn.commit()
+
+DB_PATH = LOCAL_DB_PATH

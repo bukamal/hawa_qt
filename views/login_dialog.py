@@ -1,8 +1,10 @@
+# -*- coding: utf-8 -*-
 from PyQt5.QtWidgets import QVBoxLayout, QLabel, QLineEdit, QPushButton, QHBoxLayout, QCheckBox, QComboBox, QMessageBox
 from PyQt5.QtCore import Qt, QSettings
 import qtawesome as qta
 from views.frameless_dialog import FramelessDialog
 from database import UserRepository
+from database.connection import DatabaseConnection
 from auth.session import UserSession
 from i18n.translator import translate, set_language
 from theme_manager import ThemeManager
@@ -15,6 +17,7 @@ class LoginDialog(FramelessDialog):
         self.setMinimumSize(420, 480)
         self.settings = QSettings("Hawaa", "Accounting")
         self.user_repo = UserRepository()
+        self.db_conn = DatabaseConnection()
 
         layout = QVBoxLayout(self.content_widget)
         layout.setSpacing(16)
@@ -74,25 +77,10 @@ class LoginDialog(FramelessDialog):
         self.login_btn = QPushButton(translate('login'))
         self.login_btn.setObjectName("primary")
         self.login_btn.setMinimumHeight(45)
-        self.login_btn.setStyleSheet(f"""
-            QPushButton#primary {{
-                background-color: {ThemeManager.get('primary')};
-                color: white;
-                border: none;
-                border-radius: 8px;
-                font-size: 14px;
-                font-weight: bold;
-                padding: 12px 24px;
-            }}
-            QPushButton#primary:hover {{
-                background-color: {ThemeManager.get('primary_hover')};
-            }}
-        """)
         self.login_btn.clicked.connect(self._do_login)
         layout.addWidget(self.login_btn)
 
         switch_btn = QPushButton("🔄 تبديل الحساب / مسح البيانات")
-        switch_btn.setStyleSheet(f"background-color: transparent; color: {ThemeManager.get('text_muted')}; border: none; font-size: 12px;")
         switch_btn.clicked.connect(self._switch_account)
         layout.addWidget(switch_btn)
 
@@ -100,12 +88,16 @@ class LoginDialog(FramelessDialog):
         self.fade_in()
 
     def _populate_users(self):
-        users = self.user_repo.get_all()
-        self.username_combo.clear()
-        for u in users:
-            self.username_combo.addItem(u['username'])
-        if users:
-            self.username_combo.setCurrentIndex(0)
+        if self.db_conn.is_remote():
+            self.username_combo.setEditable(True)
+            self.username_combo.clear()
+            self.username_combo.addItem("")
+            self.username_combo.setCurrentText("")
+        else:
+            users = self.user_repo.get_all()
+            self.username_combo.clear()
+            for u in users:
+                self.username_combo.addItem(u['username'])
 
     def _toggle_password(self, checked):
         if checked:
@@ -118,11 +110,7 @@ class LoginDialog(FramelessDialog):
     def _load_saved_user(self):
         saved = self.settings.value("login/username", "")
         if saved:
-            idx = self.username_combo.findText(saved)
-            if idx >= 0:
-                self.username_combo.setCurrentIndex(idx)
-            else:
-                self.username_combo.setEditText(saved)
+            self.username_combo.setEditText(saved)
             self.remember_check.setChecked(True)
             self.password_edit.setFocus()
 
@@ -157,15 +145,28 @@ class LoginDialog(FramelessDialog):
         if not username or not password:
             self.error_label.setText("يرجى إدخال اسم المستخدم وكلمة المرور")
             return
-        user = self.user_repo.authenticate(username, password)
-        if user:
-            UserSession.login(user)
-            self._save_user(username)
-            self.accept()
+
+        if self.db_conn.is_remote():
+            try:
+                rest_client = self.db_conn.get_rest_client()
+                user = rest_client.login(username, password)
+                UserSession.login(user)
+                self._save_user(username)
+                self.accept()
+            except Exception as e:
+                self.error_label.setText(f"فشل تسجيل الدخول: {str(e)}")
+                self.password_edit.clear()
+                self.password_edit.setFocus()
         else:
-            self.error_label.setText("اسم المستخدم أو كلمة المرور غير صحيحة")
-            self.password_edit.clear()
-            self.password_edit.setFocus()
+            user = self.user_repo.authenticate(username, password)
+            if user:
+                UserSession.login(user)
+                self._save_user(username)
+                self.accept()
+            else:
+                self.error_label.setText("اسم المستخدم أو كلمة المرور غير صحيحة")
+                self.password_edit.clear()
+                self.password_edit.setFocus()
 
     def showEvent(self, event):
         self.center_on_parent()
