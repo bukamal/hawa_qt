@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 import sqlite3
 import os
+import sys
 import datetime
 from functools import wraps
 from flask import Flask, request, jsonify, g
@@ -24,7 +25,21 @@ limiter = Limiter(
     storage_uri="memory://",
 )
 
-DB_PATH = os.path.join(os.path.dirname(__file__), 'hawaa_data.db')
+# ------------------- مسار قاعدة البيانات الموحّد -------------------
+def get_db_path():
+    if getattr(sys, 'frozen', False):
+        base_dir = os.path.dirname(sys.executable)
+    else:
+        base_dir = os.path.dirname(__file__)
+    if os.name == 'nt':
+        appdata = os.environ.get('APPDATA', os.path.expanduser('~\\AppData\\Roaming'))
+        data_dir = os.path.join(appdata, 'Hawaa')
+    else:
+        data_dir = os.path.expanduser('~/.hawaa')
+    os.makedirs(data_dir, exist_ok=True)
+    return os.path.join(data_dir, 'hawaa_data.db')
+
+DB_PATH = get_db_path()
 
 # ------------------- تهيئة قاعدة البيانات -------------------
 def init_db():

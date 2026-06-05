@@ -32,7 +32,12 @@ jobs:
       run: |
         pyinstaller --collect-all PyQt5 --collect-all PyQtWebEngine `
           --collect-all flask --collect-all flask_jwt_extended --collect-all flask_limiter `
+          --collect-all requests `
           --hidden-import decimal --hidden-import sqlite3 `
+          --hidden-import flask_server `
+          --hidden-import database.migrations `
+          --hidden-import auth.password `
+          --hidden-import auth.activation `
           --add-data "${{ steps.qtpath.outputs.platforms_path }};platforms" `
           --onedir --windowed --name HawaaSham main.py
 

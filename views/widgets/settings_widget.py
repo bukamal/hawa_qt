@@ -314,7 +314,7 @@ class SettingsWidget(QWidget):
 
         layout.addStretch()
 
-        # تعطيل عناصر النسخ الاحتياطي في وضع العميل (اختياري)
+        # تعطيل عناصر النسخ الاحتياطي في وضع العميل
         from database.connection import DatabaseConnection
         if DatabaseConnection().is_remote():
             self._disable_backup_controls(periodic_group)
