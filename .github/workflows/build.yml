@@ -28,7 +28,7 @@ jobs:
         $path = python -c "import PyQt5, os; print(os.path.join(os.path.dirname(PyQt5.__file__), 'Qt5', 'plugins', 'platforms'))"
         echo "platforms_path=$path" >> $env:GITHUB_OUTPUT
 
-    - name: Build with PyInstaller (OneDir, console for debugging)
+    - name: Build with PyInstaller (OneDir, windowed mode - no console)
       run: |
         pyinstaller --collect-all PyQt5 --collect-all PyQtWebEngine `
           --collect-all flask --collect-all flask_jwt_extended --collect-all flask_limiter `
@@ -41,7 +41,7 @@ jobs:
           --hidden-import werkzeug --hidden-import jinja2 --hidden-import markupsafe `
           --hidden-import click --hidden-import itsdangerous --hidden-import blinker `
           --add-data "${{ steps.qtpath.outputs.platforms_path }};platforms" `
-          --onedir --console --name HawaaSham main.py
+          --onedir --windowed --name HawaaSham main.py
 
     - name: Download Inno Setup
       run: |
