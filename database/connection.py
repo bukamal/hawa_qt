@@ -28,7 +28,7 @@ class DatabaseConnection:
 
     def _init_mode(self):
         settings = QSettings("Hawaa", "Accounting")
-        self.mode = settings.value("network/mode", "local")  # local, client, server
+        self.mode = settings.value("network/mode", "local")
         self.server_url = settings.value("network/server_url", "http://localhost:8000")
         self._rest_client = None
         if self.mode == "client":
@@ -87,9 +87,11 @@ class DatabaseConnection:
             self._local_conn.close()
             self._local_conn = None
 
-    # --- دوال CRUD موحدة ---
+    # --- دوال CRUD موحدة مع التحقق من التوكن في وضع العميل ---
     def get_expenses(self) -> List[Dict]:
         if self.mode == "client":
+            if self._rest_client is None or self._rest_client.token is None:
+                return []
             return self._rest_client.get_expenses()
         conn = self.get_connection()
         rows = conn.execute("SELECT * FROM expenses ORDER BY id DESC").fetchall()
@@ -97,6 +99,8 @@ class DatabaseConnection:
 
     def add_expense(self, data: Dict) -> int:
         if self.mode == "client":
+            if self._rest_client is None or self._rest_client.token is None:
+                raise Exception("لا يمكن إضافة قيد: لم يتم تسجيل الدخول")
             return self._rest_client.add_expense(data)
         conn = self.get_connection()
         now = __import__('datetime').datetime.now().isoformat()
@@ -118,6 +122,8 @@ class DatabaseConnection:
 
     def update_expense(self, expense_id: int, data: Dict):
         if self.mode == "client":
+            if self._rest_client is None or self._rest_client.token is None:
+                raise Exception("لا يمكن تعديل قيد: لم يتم تسجيل الدخول")
             self._rest_client.update_expense(expense_id, data)
             return
         conn = self.get_connection()
@@ -139,6 +145,8 @@ class DatabaseConnection:
 
     def delete_expense(self, expense_id: int):
         if self.mode == "client":
+            if self._rest_client is None or self._rest_client.token is None:
+                raise Exception("لا يمكن حذف قيد: لم يتم تسجيل الدخول")
             self._rest_client.delete_expense(expense_id)
             return
         conn = self.get_connection()
@@ -147,6 +155,8 @@ class DatabaseConnection:
 
     def get_users(self) -> List[Dict]:
         if self.mode == "client":
+            if self._rest_client is None or self._rest_client.token is None:
+                return []
             return self._rest_client.get_users()
         conn = self.get_connection()
         rows = conn.execute("SELECT id, username, full_name, role, created_at, last_login FROM users").fetchall()
@@ -154,6 +164,8 @@ class DatabaseConnection:
 
     def add_user(self, data: Dict) -> int:
         if self.mode == "client":
+            if self._rest_client is None or self._rest_client.token is None:
+                raise Exception("لا يمكن إضافة مستخدم: لم يتم تسجيل الدخول")
             return self._rest_client.add_user(data)
         from auth.password import hash_password
         pwd_hash, salt = hash_password(data['password'])
@@ -168,6 +180,8 @@ class DatabaseConnection:
 
     def get_audit_log(self) -> List[Dict]:
         if self.mode == "client":
+            if self._rest_client is None or self._rest_client.token is None:
+                return []
             return self._rest_client.get_audit_log()
         conn = self.get_connection()
         rows = conn.execute("SELECT * FROM audit_log ORDER BY id DESC LIMIT 2000").fetchall()
@@ -175,7 +189,6 @@ class DatabaseConnection:
 
     def get_setting(self, key: str, default=None):
         if self.mode == "client":
-            # إذا لم يكن هناك rest_client أو لم يتم تعيين توكن بعد، نعيد القيمة الافتراضية
             if self._rest_client is None or self._rest_client.token is None:
                 return default
             val = self._rest_client.get_setting(key)
@@ -186,6 +199,8 @@ class DatabaseConnection:
 
     def set_setting(self, key: str, value: str):
         if self.mode == "client":
+            if self._rest_client is None or self._rest_client.token is None:
+                raise Exception("لا يمكن حفظ الإعدادات: لم يتم تسجيل الدخول")
             self._rest_client.set_setting(key, value)
             return
         conn = self.get_connection()
@@ -194,6 +209,8 @@ class DatabaseConnection:
 
     def get_all_currencies(self):
         if self.mode == "client":
+            if self._rest_client is None or self._rest_client.token is None:
+                return []  # إرجاع قائمة فارغة بدلاً من رمي خطأ
             return self._rest_client.get_all_currencies()
         conn = self.get_connection()
         rows = conn.execute("SELECT currency_code, rate_to_usd, updated_at FROM exchange_rates ORDER BY currency_code").fetchall()
@@ -201,6 +218,8 @@ class DatabaseConnection:
 
     def update_exchange_rate(self, currency_code: str, rate_to_usd: float):
         if self.mode == "client":
+            if self._rest_client is None or self._rest_client.token is None:
+                raise Exception("لا يمكن تحديث سعر الصرف: لم يتم تسجيل الدخول")
             self._rest_client.update_exchange_rate(currency_code, rate_to_usd)
             return
         conn = self.get_connection()
