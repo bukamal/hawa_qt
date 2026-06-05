@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 import sys
 import os
-import threading
+import subprocess
 import time
 import datetime
 import shutil
 import requests
 import tempfile
+import threading
 from PyQt5.QtWidgets import QApplication, QMessageBox, QDialog, QVBoxLayout, QDialogButtonBox
 from PyQt5.QtCore import QTimer, QSettings, Qt
 from PyQt5.QtGui import QFont
@@ -34,17 +35,18 @@ def on_license_invalid():
     QTimer.singleShot(0, show)
 
 def run_flask_server():
-    """تشغيل خادم Flask مع تسجيل الأخطاء في مجلد مؤقت آمن"""
-    error_log = os.path.join(tempfile.gettempdir(), "hawaa_server_crash.log")
+    """تشغيل خادم Flask في عملية فرعية مستقلة"""
+    error_log = os.path.join(tempfile.gettempdir(), "hawaa_subprocess_error.log")
     try:
-        from flask_server import app
-        app.run(host='0.0.0.0', port=8000, threaded=True, debug=False, use_reloader=False)
+        exe_path = sys.executable
+        cmd = [exe_path, '--server']
+        if sys.platform == 'win32':
+            subprocess.Popen(cmd, creationflags=subprocess.CREATE_NO_WINDOW)
+        else:
+            subprocess.Popen(cmd)
     except Exception as e:
         with open(error_log, "w", encoding='utf-8') as f:
-            f.write(f"Flask server crashed at {datetime.datetime.now().isoformat()}\n")
             f.write(str(e))
-            import traceback
-            traceback.print_exc(file=f)
         def show_error():
             QMessageBox.critical(None, "خطأ في الخادم",
                                 f"فشل بدء خادم Flask.\nتم تسجيل الخطأ في:\n{error_log}")
@@ -123,6 +125,16 @@ def test_server_connection(url):
         return False
 
 def main():
+    # إذا تم تشغيل التطبيق كخادم منفصل
+    if len(sys.argv) > 1 and sys.argv[1] == '--server':
+        print("تشغيل خادم هوى الشام...")
+        from database.migrations import ensure_db as ensure_db_remote
+        ensure_db_remote()
+        from waitress import serve
+        from flask_server import app
+        serve(app, host='0.0.0.0', port=8000, threads=4)
+        return
+
     app = QApplication(sys.argv)
     app.setFont(QFont("Tajawal", 10))
     enable_auto_select_all(app)
@@ -135,11 +147,9 @@ def main():
     server_url = db_conn.server_url
 
     if mode == "server":
-        # تشغيل خادم Flask في thread منفصل
-        server_thread = threading.Thread(target=run_flask_server, daemon=True)
-        server_thread.start()
+        run_flask_server()
         if not wait_for_server("http://localhost:8000"):
-            QMessageBox.critical(None, "خطأ", "فشل بدء الخادم الداخلي. تحقق من المنفذ 8000 أو جدار الحماية.\nتم تسجيل التفاصيل في ملف مؤقت.")
+            QMessageBox.critical(None, "خطأ", "فشل بدء الخادم الداخلي. تحقق من المنفذ 8000 أو جدار الحماية.")
             sys.exit(1)
         QMessageBox.information(None, "خادم", "تم بدء الخادم بنجاح. يمكن للأجهزة الأخرى الاتصال به.")
         os.environ['HAWAA_MODE'] = 'server'

@@ -30,7 +30,6 @@ class AccountsWidget(QWidget):
         self.search_edit.textChanged.connect(self.refresh_table)
         search_layout.addWidget(self.search_edit)
         
-        # زر الإضافة: يظهر فقط للمستخدمين الذين ليسوا مشاهِدين (admin أو user)
         self.add_btn = QPushButton("➕ " + translate('add'))
         self.add_btn.clicked.connect(self.add_record)
         if not UserSession.is_admin() and UserSession.get_current().get('role') == 'viewer':
@@ -49,7 +48,6 @@ class AccountsWidget(QWidget):
         btn_layout.addStretch()
         layout.addLayout(btn_layout)
 
-        # الجدول
         self.table = CustomTableView()
         self.table.setSelectionBehavior(CustomTableView.SelectRows)
         self.table.doubleClicked.connect(self.show_details)
@@ -59,7 +57,11 @@ class AccountsWidget(QWidget):
 
     def refresh_table(self):
         repo = ExpenseRepository()
-        expenses = repo.get_all(convert_to_display=False)
+        try:
+            expenses = repo.get_all(convert_to_display=False)
+        except Exception as e:
+            QMessageBox.critical(self, "خطأ", f"فشل تحميل البيانات: {str(e)}")
+            return
         search = self.search_edit.text().strip().lower()
         groups = defaultdict(lambda: {'incoming': 0.0, 'outgoing': 0.0})
         for e in expenses:
@@ -90,7 +92,6 @@ class AccountsWidget(QWidget):
         self.table.refresh_style()
 
     def add_record(self):
-        # حماية إضافية: منع المشاهد من الإضافة
         if UserSession.get_current().get('role') == 'viewer':
             QMessageBox.warning(self, translate('warning'), "ليس لديك صلاحية لإضافة قيود")
             return
@@ -153,7 +154,7 @@ class AccountsWidget(QWidget):
 <body>
 <h1>{title}</h1>
 <table>
-<thead><tr>{"".join(f'<th>{h}</th>' for h in headers)}</tr></thead>
+<thead><tr>{"".join(f'<th>{h}</th>' for h in headers)}</thead>
 <tbody>
 """
         for row in data:
@@ -280,7 +281,7 @@ class AccountsWidget(QWidget):
                 <td class="center">{incoming_str}</td>
                 <td class="center">{outgoing_str}</td>
                 <td class="center">{running_str}</td>
-             </tr>
+              </tr>
 """
         html = f"""<!DOCTYPE html>
 <html dir="rtl" lang="ar">

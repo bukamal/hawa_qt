@@ -51,7 +51,6 @@ class DatabaseConnection:
                 os.makedirs(os.path.dirname(LOCAL_DB_PATH), exist_ok=True)
                 self._local_conn = sqlite3.connect(LOCAL_DB_PATH, isolation_level=None)
                 self._local_conn.row_factory = sqlite3.Row
-                # تفعيل WAL للوضع المحلي
                 self._local_conn.execute('PRAGMA journal_mode=WAL')
             return self._local_conn
         else:
@@ -64,6 +63,13 @@ class DatabaseConnection:
         else:
             raise NotImplementedError("Use REST client methods")
 
+    def executemany(self, sql: str, params_list, audit_data=None):
+        if self.mode != "client":
+            conn = self.get_connection()
+            return conn.executemany(sql, params_list)
+        else:
+            raise NotImplementedError("Use REST client methods")
+
     def commit(self):
         if self.mode != "client":
             self.get_connection().commit()
@@ -71,6 +77,10 @@ class DatabaseConnection:
     def rollback(self):
         if self.mode != "client":
             self.get_connection().rollback()
+
+    def begin(self):
+        if self.mode != "client":
+            self.execute("BEGIN TRANSACTION")
 
     def close(self):
         if self._local_conn:
@@ -178,5 +188,9 @@ class DatabaseConnection:
         conn = self.get_connection()
         conn.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, value))
         conn.commit()
+
+    def vacuum(self):
+        if self.mode != "client" and self._local_conn:
+            self._local_conn.execute("VACUUM")
 
 DB_PATH = LOCAL_DB_PATH

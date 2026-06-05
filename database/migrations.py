@@ -11,7 +11,11 @@ def init_database():
         print("⚠️ وضع العميل: قاعدة البيانات على الخادم، لا حاجة لإنشاء محلي.")
         return
 
-    conn = db.get_connection()
+    # إغلاق أي اتصال مفتوح قبل إنشاء الجداول
+    db.close()
+    
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
 
     cursor.executescript('''
@@ -117,6 +121,7 @@ def init_database():
         ''', ('admin', pwd_hash, salt, 'المدير العام', 'admin', now, 1))
 
     conn.commit()
+    conn.close()
     print(f"✅ تم تهيئة قاعدة البيانات المحلية في: {DB_PATH}")
 
 def ensure_db():
@@ -138,7 +143,6 @@ def ensure_db():
             if 'exchange_rate_to_usd' not in columns:
                 cursor.execute("ALTER TABLE expenses ADD COLUMN exchange_rate_to_usd REAL NOT NULL DEFAULT 1.0")
             cursor.execute("UPDATE expenses SET amount_original = amount, currency_original = currency, exchange_rate_to_usd = 1.0 WHERE amount_original = 0")
-            # التأكد من وجود جدول token_blacklist في القواعد القديمة
             cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='token_blacklist'")
             if not cursor.fetchone():
                 cursor.execute('''
@@ -151,4 +155,3 @@ def ensure_db():
             conn.close()
         except Exception as e:
             print(f"تحذير: تعذر تحديث قاعدة البيانات القديمة: {e}")
-        init_database()

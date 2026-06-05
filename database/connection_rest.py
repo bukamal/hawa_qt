@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 import requests
+import time
 from typing import List, Dict, Any
 
 class RestClient:
@@ -16,12 +17,22 @@ class RestClient:
             headers['Authorization'] = f'Bearer {self.token}'
         return headers
 
-    def _request(self, method, endpoint, data=None):
+    def _request(self, method, endpoint, data=None, retries=3, backoff=1.0):
         url = f"{self.server_url}{endpoint}"
-        resp = requests.request(method, url, json=data, headers=self._headers())
-        if resp.status_code >= 400:
-            raise Exception(f"API error {resp.status_code}: {resp.text}")
-        return resp.json() if resp.text else None
+        last_exception = None
+        for attempt in range(retries):
+            try:
+                resp = requests.request(method, url, json=data, headers=self._headers(), timeout=10)
+                if resp.status_code >= 400:
+                    raise Exception(f"API error {resp.status_code}: {resp.text}")
+                return resp.json() if resp.text else None
+            except Exception as e:
+                last_exception = e
+                if attempt < retries - 1:
+                    time.sleep(backoff * (2 ** attempt))
+                else:
+                    raise Exception(f"Failed after {retries} attempts: {str(e)}")
+        raise last_exception
 
     # ------------------- المصادقة -------------------
     def login(self, username: str, password: str) -> Dict:
@@ -30,7 +41,6 @@ class RestClient:
         return result['user']
 
     def logout(self):
-        """تسجيل الخروج وإبطال التوكن"""
         self._request('POST', '/api/logout')
         self.token = None
 

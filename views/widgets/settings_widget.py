@@ -15,6 +15,7 @@ import os
 import shutil
 import datetime
 import requests
+import socket
 
 class SettingsWidget(QWidget):
     rates_changed = pyqtSignal()
@@ -187,6 +188,16 @@ class SettingsWidget(QWidget):
         form = QFormLayout()
         form.setLabelAlignment(Qt.AlignRight)
 
+        # عرض IP المحلي
+        try:
+            hostname = socket.gethostname()
+            local_ip = socket.gethostbyname(hostname)
+        except:
+            local_ip = "غير متوفر"
+        ip_label = QLabel(f"عنوان هذا الجهاز: {local_ip}")
+        ip_label.setStyleSheet("color: #64748b; font-size: 12px;")
+        form.addRow(ip_label)
+
         self.mode_combo = QComboBox()
         self.mode_combo.addItems(["محلي (بدون شبكة)", "عميل (اتصال بخادم)", "خادم (تشغيل خدمة)"])
         current_mode = self.repo.get('network_mode', 'local')
@@ -200,6 +211,12 @@ class SettingsWidget(QWidget):
         server_url = self.repo.get('network_server_url', 'http://localhost:8000')
         self.server_url_edit.setText(server_url)
         form.addRow("عنوان الخادم البعيد:", self.server_url_edit)
+
+        # اختبار تلقائي
+        self.connection_test_label = QLabel("")
+        self.connection_test_label.setStyleSheet("font-size: 10px;")
+        form.addRow(self.connection_test_label)
+        self.server_url_edit.textChanged.connect(self.auto_test_connection)
 
         self.test_btn = QPushButton("🔍 اختبار الاتصال")
         self.test_btn.clicked.connect(self.test_connection)
@@ -220,6 +237,28 @@ class SettingsWidget(QWidget):
         is_client = self.mode_combo.currentIndex() == 1
         self.server_url_edit.setEnabled(is_client)
         self.test_btn.setEnabled(is_client)
+
+    def auto_test_connection(self):
+        if self.mode_combo.currentIndex() != 1:
+            self.connection_test_label.setText("")
+            return
+        url = self.server_url_edit.text().strip()
+        if not url:
+            self.connection_test_label.setText("")
+            return
+        if not url.startswith("http://") and not url.startswith("https://"):
+            url = "http://" + url
+        try:
+            resp = requests.get(f"{url}/health", timeout=2)
+            if resp.status_code == 200 and resp.json().get("status") == "alive":
+                self.connection_test_label.setText("✅ متصل")
+                self.connection_test_label.setStyleSheet("color: green; font-size: 10px;")
+            else:
+                self.connection_test_label.setText("❌ غير متصل (استجابة غير صالحة)")
+                self.connection_test_label.setStyleSheet("color: red; font-size: 10px;")
+        except Exception as e:
+            self.connection_test_label.setText(f"❌ خطأ: {str(e)[:30]}")
+            self.connection_test_label.setStyleSheet("color: red; font-size: 10px;")
 
     def test_connection(self):
         url = self.server_url_edit.text().strip()
@@ -424,11 +463,17 @@ class SettingsWidget(QWidget):
                                      QMessageBox.Yes | QMessageBox.No)
         if reply == QMessageBox.Yes:
             try:
+                db_conn = DatabaseConnection()
+                db_conn.close()
+                import time
+                time.sleep(0.5)
                 if os.path.exists(DB_PATH):
                     os.remove(DB_PATH)
                 from database.migrations import init_database
                 init_database()
                 QMessageBox.information(self, "نجاح", "تم إعادة تهيئة قاعدة البيانات المحلية. يرجى إعادة تشغيل التطبيق.")
+            except PermissionError as e:
+                QMessageBox.critical(self, "خطأ", f"لا يمكن حذف الملف لأنه مستخدم من عملية أخرى.\n{str(e)}\nيرجى إغلاق أي تطبيق آخر يصل إلى قاعدة البيانات (مثل خادم Flask) ثم حاول مجدداً.")
             except Exception as e:
                 QMessageBox.critical(self, "خطأ", f"فشل إعادة التهيئة: {str(e)}")
 

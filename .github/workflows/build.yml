@@ -28,11 +28,11 @@ jobs:
         $path = python -c "import PyQt5, os; print(os.path.join(os.path.dirname(PyQt5.__file__), 'Qt5', 'plugins', 'platforms'))"
         echo "platforms_path=$path" >> $env:GITHUB_OUTPUT
 
-    - name: Build with PyInstaller (OneDir, console mode for debugging)
+    - name: Build with PyInstaller (OneDir, console for debugging)
       run: |
         pyinstaller --collect-all PyQt5 --collect-all PyQtWebEngine `
           --collect-all flask --collect-all flask_jwt_extended --collect-all flask_limiter `
-          --collect-all requests `
+          --collect-all requests --collect-all waitress `
           --hidden-import decimal --hidden-import sqlite3 `
           --hidden-import flask_server `
           --hidden-import database.migrations `

@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
 from PyQt5.QtWidgets import QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QStackedWidget, QPushButton, QLabel, QFrame, QMessageBox, QApplication
-from PyQt5.QtCore import Qt, QPoint, QPropertyAnimation
+from PyQt5.QtCore import Qt, QPoint, QPropertyAnimation, QTimer
 from PyQt5.QtGui import QIcon
 import qtawesome as qta
+import requests
 from auth.session import UserSession
 from i18n.translator import translate, set_language
 from database import SettingsRepository
@@ -28,6 +29,7 @@ class MainWindow(QMainWindow):
         self.sidebar_collapsed = False
         self.sidebar_width = 250
         self.sidebar_collapsed_width = 70
+        self.status_timer = None
 
         repo = SettingsRepository()
         set_language(repo.get_language())
@@ -37,8 +39,41 @@ class MainWindow(QMainWindow):
         self.setup_ui()
         self.setup_sidebar()
         self.switch_page('accounts')
-
+        self.start_connection_monitor()
         self.installEventFilter(self)
+
+    def start_connection_monitor(self):
+        from database.connection import DatabaseConnection
+        self.connection_status = QLabel()
+        self.connection_status.setFixedSize(16, 16)
+        self.connection_status.setStyleSheet("background-color: gray; border-radius: 8px;")
+        if hasattr(self, 'title_layout'):
+            self.title_layout.insertWidget(3, self.connection_status)
+        if DatabaseConnection().is_remote():
+            self.update_connection_status()
+            self.status_timer = QTimer(self)
+            self.status_timer.timeout.connect(self.update_connection_status)
+            self.status_timer.start(30000)
+
+    def update_connection_status(self):
+        from database.connection import DatabaseConnection
+        db = DatabaseConnection()
+        if not db.is_remote():
+            self.connection_status.setStyleSheet("background-color: gray; border-radius: 8px;")
+            self.connection_status.setToolTip("وضع محلي")
+            return
+        url = db.server_url
+        try:
+            resp = requests.get(f"{url}/health", timeout=3)
+            if resp.status_code == 200 and resp.json().get("status") == "alive":
+                self.connection_status.setStyleSheet("background-color: #10b981; border-radius: 8px;")
+                self.connection_status.setToolTip("متصل بالخادم")
+            else:
+                self.connection_status.setStyleSheet("background-color: #ef4444; border-radius: 8px;")
+                self.connection_status.setToolTip("الخادم لا يستجيب")
+        except:
+            self.connection_status.setStyleSheet("background-color: #ef4444; border-radius: 8px;")
+            self.connection_status.setToolTip("لا يمكن الاتصال بالخادم")
 
     def eventFilter(self, obj, event):
         if event.type() == event.KeyPress and event.key() == Qt.Key_Escape:
@@ -58,6 +93,7 @@ class MainWindow(QMainWindow):
         self.title_bar.setFixedHeight(50)
         title_layout = QHBoxLayout(self.title_bar)
         title_layout.setContentsMargins(15,0,10,0)
+        self.title_layout = title_layout
 
         icon_label = QLabel("🏢")
         icon_label.setFixedSize(24,24)
@@ -236,7 +272,6 @@ class MainWindow(QMainWindow):
     def logout(self):
         reply = QMessageBox.question(self, translate('logout'), "هل تريد تسجيل الخروج؟", QMessageBox.Yes|QMessageBox.No)
         if reply == QMessageBox.Yes:
-            # إبطال التوكن في وضع العميل
             from database.connection import DatabaseConnection
             db = DatabaseConnection()
             if db.is_remote():

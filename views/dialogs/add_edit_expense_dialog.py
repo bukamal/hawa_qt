@@ -132,9 +132,11 @@ class AddEditExpenseDialog(CenteredDialog):
         user = UserSession.get_current()
         user_id = user['id'] if user else None
         repo = ExpenseRepository()
-        if self.expense:
-            repo.update(self.expense['id'], company, amount, type_val, date, notes, currency_code, user_id)
-        else:
-            repo.add(company, amount, type_val, date, notes, currency_code, user_id)
-        self.accept()
-
+        try:
+            if self.expense:
+                repo.update(self.expense['id'], company, amount, type_val, date, notes, currency_code, user_id)
+            else:
+                repo.add(company, amount, type_val, date, notes, currency_code, user_id)
+            self.accept()
+        except Exception as e:
+            QMessageBox.critical(self, translate('error'), f"فشل حفظ القيد: {str(e)}")
