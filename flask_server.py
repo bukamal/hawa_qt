@@ -121,7 +121,7 @@ def logout():
     log_audit('تسجيل خروج', 'auth', 0, '', request)
     return jsonify({'status': 'logged out'}), 200
 
-# ------------------- المصادقة (مع تعديل identity إلى str) -------------------
+# ------------------- المصادقة -------------------
 @app.route('/api/login', methods=['POST'])
 @limiter.limit("5 per minute")
 def login():
@@ -133,7 +133,6 @@ def login():
     if not user:
         return jsonify({'error': 'Invalid credentials'}), 401
     if verify_password(user['password_hash'], user['salt'], password):
-        # تحويل user['id'] إلى نص لتجنب خطأ "Subject must be a string"
         token = create_access_token(identity=str(user['id']))
         log_audit('تسجيل دخول', 'users', user['id'], f'المستخدم {username}', request)
         return jsonify({
@@ -161,7 +160,7 @@ def get_expenses():
 @jwt_required()
 @limiter.limit("50 per minute")
 def add_expense():
-    user_id = int(get_jwt_identity())  # نص -> عدد
+    user_id = int(get_jwt_identity())
     data = request.get_json()
     required_fields = ['company_name', 'amount', 'type', 'date', 'currency']
     for f in required_fields:
@@ -342,11 +341,34 @@ def set_setting(key):
     log_audit('تعديل إعداد', 'settings', 0, f'{key} = {value}', request)
     return jsonify({'status': 'ok'})
 
+# ------------------- أسعار الصرف -------------------
+@app.route('/api/exchange_rates', methods=['GET'])
+@jwt_required()
+def get_exchange_rates():
+    conn = get_db()
+    rows = conn.execute('SELECT currency_code, rate_to_usd, updated_at FROM exchange_rates ORDER BY currency_code').fetchall()
+    return jsonify([dict(row) for row in rows])
+
+@app.route('/api/exchange_rates/<currency_code>', methods=['PUT'])
+@admin_required
+def update_exchange_rate(currency_code):
+    data = request.get_json()
+    rate_to_usd = data.get('rate_to_usd')
+    if rate_to_usd is None:
+        return jsonify({'error': 'rate_to_usd required'}), 400
+    now = datetime.datetime.now().isoformat()
+    conn = get_db()
+    conn.execute('INSERT OR REPLACE INTO exchange_rates (currency_code, rate_to_usd, updated_at) VALUES (?, ?, ?)',
+                 (currency_code, rate_to_usd, now))
+    conn.commit()
+    log_audit('تحديث سعر صرف', 'exchange_rates', 0, f'{currency_code} = {rate_to_usd}', request)
+    return jsonify({'status': 'ok'})
+
 # ------------------- الصحة -------------------
 @app.route('/health', methods=['GET'])
 def health():
     return jsonify({'status': 'alive'})
 
 if __name__ == '__main__':
-    # يتم استدعاء الخادم عبر waitress من main.py --server أو run_server.py
+    # سيتم تشغيل الخادم عبر waitress من main.py --server أو run_server.py
     pass

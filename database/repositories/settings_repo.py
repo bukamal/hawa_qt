@@ -3,12 +3,10 @@ from database.repositories.base_repo import BaseRepository
 
 class SettingsRepository(BaseRepository):
     def get(self, key: str, default=None):
-        row = self._fetch_one("SELECT value FROM settings WHERE key=?", (key,))
-        return row['value'] if row else default
+        return self.db.get_setting(key, default)
     
     def set(self, key: str, value: str):
-        self._execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?,?)", (key, value))
-        self._commit()
+        self.db.set_setting(key, value)
     
     def get_currency_settings(self):
         return {

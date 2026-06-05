@@ -158,7 +158,7 @@ class AccountsWidget(QWidget):
 <tbody>
 """
         for row in data:
-            html += "<tr>" + "".join(f"<td>{cell}</td>" for cell in row) + "</tr>"
+            html += "<tr>" + "".join(f"一位{cell}一位" for cell in row) + "</tr>"
         html += f"""
 </tbody>
 </table>
@@ -255,6 +255,15 @@ class AccountsWidget(QWidget):
         dialog.accept()
 
         display_currency = currency.get_display_currency()
+        
+        # حساب الإجماليات للفترة
+        total_in_usd = sum(r['amount'] for r in filtered if r['type'] == 'incoming')
+        total_out_usd = sum(r['amount'] for r in filtered if r['type'] == 'outgoing')
+        net_usd = total_in_usd - total_out_usd
+        total_in_display = currency.convert(total_in_usd, 'USD', display_currency)
+        total_out_display = currency.convert(total_out_usd, 'USD', display_currency)
+        net_display = currency.convert(net_usd, 'USD', display_currency)
+        
         table_rows = ""
         running_usd = 0.0
         for r in filtered:
@@ -290,6 +299,7 @@ class AccountsWidget(QWidget):
     body {{ font-family: 'Tahoma', 'Arial', sans-serif; margin: 1.5cm; direction: rtl; background: white; }}
     h1 {{ color: #2c3e50; text-align: center; border-bottom: 2px solid #3498db; }}
     .period-info {{ text-align: center; margin-bottom: 20px; }}
+    .summary {{ text-align: center; margin: 20px 0; font-size: 16px; font-weight: bold; background: #e9ecef; padding: 10px; border-radius: 8px; }}
     table {{ width: 100%; border-collapse: collapse; margin-top: 20px; }}
     th, td {{ border: 1px solid #ccc; padding: 8px; }}
     th {{ background: #2c3e50; color: white; }}
@@ -303,8 +313,15 @@ class AccountsWidget(QWidget):
 <body>
     <h1>📊 تقرير حسابات شركة: {company}</h1>
     <div class="period-info">الفترة: {start_date} إلى {end_date}</div>
+    <div class="summary">
+        📥 إجمالي وارد: {currency.format_amount(total_in_display, display_currency)} &nbsp;|&nbsp;
+        📤 إجمالي صادر: {currency.format_amount(total_out_display, display_currency)} &nbsp;|&nbsp;
+        💰 صافي: {currency.format_amount(net_display, display_currency)}
+    </div>
     <table>
-        <thead><tr><th>التاريخ</th><th>ملاحظات</th><th>لنا</th><th>له</th><th>التراكمي</th></tr></thead>
+        <thead>
+            <tr><th>التاريخ</th><th>ملاحظات</th><th>لنا</th><th>له</th><th>التراكمي</th></tr>
+        </thead>
         <tbody>{table_rows}</tbody>
     </table>
     <div class="footer">نظام هوى الشام للسياحة والسفر<br>تاريخ الطباعة: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}</div>

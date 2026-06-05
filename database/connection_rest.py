@@ -89,3 +89,10 @@ class RestClient:
 
     def set_setting(self, key: str, value: str):
         self._request('POST', f'/api/settings/{key}', {'value': value})
+
+    # ------------------- أسعار الصرف -------------------
+    def get_all_currencies(self):
+        return self._request('GET', '/api/exchange_rates')
+
+    def update_exchange_rate(self, currency_code: str, rate_to_usd: float):
+        self._request('PUT', f'/api/exchange_rates/{currency_code}', {'rate_to_usd': rate_to_usd})

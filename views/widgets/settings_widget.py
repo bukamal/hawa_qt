@@ -204,7 +204,8 @@ class SettingsWidget(QWidget):
 
         self.mode_combo = QComboBox()
         self.mode_combo.addItems(["محلي (بدون شبكة)", "عميل (اتصال بخادم)", "خادم (تشغيل خدمة)"])
-        current_mode = self.repo.get('network_mode', 'local')
+        qsettings = QSettings("Hawaa", "Accounting")
+        current_mode = qsettings.value("network/mode", "local")
         mode_idx = {'local': 0, 'client': 1, 'server': 2}
         self.mode_combo.setCurrentIndex(mode_idx.get(current_mode, 0))
         self.mode_combo.currentIndexChanged.connect(self.on_mode_changed)
@@ -212,7 +213,7 @@ class SettingsWidget(QWidget):
 
         self.server_url_edit = QLineEdit()
         self.server_url_edit.setPlaceholderText("http://192.168.1.100:8000")
-        server_url = self.repo.get('network_server_url', 'http://localhost:8000')
+        server_url = qsettings.value("network/server_url", "http://localhost:8000")
         self.server_url_edit.setText(server_url)
         form.addRow("عنوان الخادم البعيد:", self.server_url_edit)
 
@@ -289,7 +290,7 @@ class SettingsWidget(QWidget):
             QMessageBox.critical(self, "خطأ", f"فشل تشغيل الخادم: {str(e)}")
 
     def stop_server_process(self):
-        if not self.server_process or self.server_process.poll() is not None:
+        if not self.server_process or self.server_process.poll() is None:
             self.server_process = None
             self.update_server_status()
             QMessageBox.information(self, "تنبيه", "الخادم غير قيد التشغيل.")
@@ -368,8 +369,9 @@ class SettingsWidget(QWidget):
     def save_network_settings(self):
         mode_map = {0: 'local', 1: 'client', 2: 'server'}
         mode = mode_map[self.mode_combo.currentIndex()]
-        self.repo.set('network_mode', mode)
-        self.repo.set('network_server_url', self.server_url_edit.text())
+        qsettings = QSettings("Hawaa", "Accounting")
+        qsettings.setValue("network/mode", mode)
+        qsettings.setValue("network/server_url", self.server_url_edit.text())
         if mode == 'server':
             try:
                 resp = requests.get("http://localhost:8000/health", timeout=1)

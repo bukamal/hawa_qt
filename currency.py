@@ -40,19 +40,24 @@ class CurrencyManager:
     def get_rate_to_usd(self, currency_code: str) -> float:
         if currency_code == 'USD':
             return 1.0
-        conn = DatabaseConnection()
-        cursor = conn.execute("SELECT rate_to_usd FROM exchange_rates WHERE currency_code=?", (currency_code,))
-        row = cursor.fetchone()
-        if row:
-            return row[0]
-        return 1.0
+        db = DatabaseConnection()
+        if db.is_remote():
+            rates = db.get_all_currencies()
+            for r in rates:
+                if r['currency_code'] == currency_code:
+                    return r['rate_to_usd']
+            return 1.0
+        else:
+            conn = db.get_connection()
+            cursor = conn.execute("SELECT rate_to_usd FROM exchange_rates WHERE currency_code=?", (currency_code,))
+            row = cursor.fetchone()
+            if row:
+                return row[0]
+            return 1.0
     
     def update_rate(self, currency_code: str, rate_to_usd: float):
-        conn = DatabaseConnection()
-        now = datetime.datetime.now().isoformat()
-        conn.execute("INSERT OR REPLACE INTO exchange_rates (currency_code, rate_to_usd, updated_at) VALUES (?,?,?)",
-                     (currency_code, rate_to_usd, now))
-        conn.commit()
+        db = DatabaseConnection()
+        db.update_exchange_rate(currency_code, rate_to_usd)
     
     def convert(self, amount: float, from_currency: str, to_currency: str) -> float:
         if from_currency == to_currency:
@@ -87,13 +92,10 @@ class CurrencyManager:
         if fmt == 'arabic':
             formatted = formatted.replace('0', '٠').replace('1', '١').replace('2', '٢').replace('3', '٣').replace('4', '٤')\
                                  .replace('5', '٥').replace('6', '٦').replace('7', '٧').replace('8', '٨').replace('9', '٩')
-        # إرجاع الرقم والرمز بدون مسافات إضافية لتجنب تكرار الرمز
         return f"{formatted} {symbol}"
     
     def get_all_currencies(self) -> list:
-        conn = DatabaseConnection()
-        cursor = conn.execute("SELECT currency_code, rate_to_usd, updated_at FROM exchange_rates ORDER BY currency_code")
-        rows = cursor.fetchall()
-        return [{'currency_code': r[0], 'rate_to_usd': r[1], 'updated_at': r[2]} for r in rows]
+        db = DatabaseConnection()
+        return db.get_all_currencies()
 
 currency = CurrencyManager()

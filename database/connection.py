@@ -189,6 +189,23 @@ class DatabaseConnection:
         conn.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, value))
         conn.commit()
 
+    def get_all_currencies(self):
+        if self.mode == "client":
+            return self._rest_client.get_all_currencies()
+        conn = self.get_connection()
+        rows = conn.execute("SELECT currency_code, rate_to_usd, updated_at FROM exchange_rates ORDER BY currency_code").fetchall()
+        return [dict(row) for row in rows]
+
+    def update_exchange_rate(self, currency_code: str, rate_to_usd: float):
+        if self.mode == "client":
+            self._rest_client.update_exchange_rate(currency_code, rate_to_usd)
+            return
+        conn = self.get_connection()
+        now = __import__('datetime').datetime.now().isoformat()
+        conn.execute("INSERT OR REPLACE INTO exchange_rates (currency_code, rate_to_usd, updated_at) VALUES (?, ?, ?)",
+                     (currency_code, rate_to_usd, now))
+        conn.commit()
+
     def vacuum(self):
         if self.mode != "client" and self._local_conn:
             self._local_conn.execute("VACUUM")

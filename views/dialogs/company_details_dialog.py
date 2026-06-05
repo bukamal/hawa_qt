@@ -73,6 +73,12 @@ class CompanyDetailsDialog(CenteredDialog):
         total_out_display = currency.convert(total_out_usd, 'USD', display_currency)
         net_display = currency.convert(net_usd, 'USD', display_currency)
         
+        # تخزين الإجماليات للاستخدام في الطباعة
+        self.total_in_display = total_in_display
+        self.total_out_display = total_out_display
+        self.net_display = net_display
+        self.display_currency = display_currency
+        
         self.summary_label.setText(
             f"📥 إجمالي وارد: {currency.format_amount(total_in_display, display_currency)}   |   "
             f"📤 إجمالي صادر: {currency.format_amount(total_out_display, display_currency)}   |   "
@@ -188,7 +194,12 @@ class CompanyDetailsDialog(CenteredDialog):
         now = datetime.now()
         date_str = now.strftime("%Y-%m-%d")
         time_str = now.strftime("%H:%M:%S")
-        display_currency = currency.get_display_currency()
+        display_currency = self.display_currency if hasattr(self, 'display_currency') else currency.get_display_currency()
+        
+        # استخدام الإجماليات المخزنة
+        total_in = self.total_in_display if hasattr(self, 'total_in_display') else 0
+        total_out = self.total_out_display if hasattr(self, 'total_out_display') else 0
+        net = self.net_display if hasattr(self, 'net_display') else 0
         
         running_usd = 0.0
         table_rows = ""
@@ -220,7 +231,7 @@ class CompanyDetailsDialog(CenteredDialog):
                 <td class="center income">{self.clean_text(incoming_str)}</td>
                 <td class="center expense">{self.clean_text(outgoing_str)}</td>
                 <td class="center">{self.clean_text(running_str)}</td>
-             </tr>
+              </tr>
 """
         html = f"""<!DOCTYPE html>
 <html dir="rtl" lang="ar">
@@ -229,6 +240,7 @@ class CompanyDetailsDialog(CenteredDialog):
     body {{ font-family: 'Tahoma', 'Arial', sans-serif; margin: 1.5cm; direction: rtl; background: white; }}
     h1 {{ color: #2c3e50; text-align: center; border-bottom: 2px solid #3498db; padding-bottom: 8px; }}
     .company-info {{ text-align: center; margin-bottom: 20px; color: #2c3e50; border: 1px solid #ddd; padding: 8px; background: #f9f9f9; }}
+    .summary {{ text-align: center; margin: 20px 0; font-size: 16px; font-weight: bold; background: #e9ecef; padding: 10px; border-radius: 8px; }}
     table {{ width: 100%; border-collapse: collapse; margin-top: 20px; }}
     th {{ background: #2c3e50; color: white; padding: 10px; border: 1px solid #1a252f; text-align: center; }}
     td {{ border: 1px solid #bdc3c7; padding: 8px; }}
@@ -247,10 +259,15 @@ class CompanyDetailsDialog(CenteredDialog):
         <strong>{self.clean_text(company_info.get('name', 'هوى الشام للسياحة والسفر'))}</strong><br>
         {self.clean_text(company_info.get('address', ''))} | 📞 {self.clean_text(company_info.get('phone', ''))} | ✉️ {self.clean_text(company_info.get('email', ''))}
     </div>
+    <div class="summary">
+        📥 إجمالي وارد: {currency.format_amount(total_in, display_currency)} &nbsp;|&nbsp;
+        📤 إجمالي صادر: {currency.format_amount(total_out, display_currency)} &nbsp;|&nbsp;
+        💰 صافي: {currency.format_amount(net, display_currency)}
+    </div>
     <table class="data-table">
         <thead><tr><th>#</th><th>{translate('date')}</th><th>{translate('notes')}</th><th>لنا</th><th>له</th><th>{translate('cumulative')}</th></tr></thead>
         <tbody>{table_rows}</tbody>
-    </table>
+     </table>
     <div class="footer">نظام هوى الشام للسياحة والسفر<br>{self.clean_text(date_str)} - {self.clean_text(time_str)}</div>
 </body>
 </html>"""
