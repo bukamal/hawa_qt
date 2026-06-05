@@ -25,7 +25,7 @@ limiter = Limiter(
     storage_uri="memory://",
 )
 
-# ------------------- مسار قاعدة البيانات الموحّد (نفس منطق connection.py) -------------------
+# ------------------- مسار قاعدة البيانات الموحّد -------------------
 def get_local_db_path():
     if os.name == 'nt':
         appdata = os.environ.get('APPDATA', os.path.expanduser('~\\AppData\\Roaming'))
@@ -121,7 +121,7 @@ def logout():
     log_audit('تسجيل خروج', 'auth', 0, '', request)
     return jsonify({'status': 'logged out'}), 200
 
-# ------------------- المصادقة -------------------
+# ------------------- المصادقة (مع تعديل identity إلى str) -------------------
 @app.route('/api/login', methods=['POST'])
 @limiter.limit("5 per minute")
 def login():
@@ -133,7 +133,8 @@ def login():
     if not user:
         return jsonify({'error': 'Invalid credentials'}), 401
     if verify_password(user['password_hash'], user['salt'], password):
-        token = create_access_token(identity=user['id'])
+        # تحويل user['id'] إلى نص لتجنب خطأ "Subject must be a string"
+        token = create_access_token(identity=str(user['id']))
         log_audit('تسجيل دخول', 'users', user['id'], f'المستخدم {username}', request)
         return jsonify({
             'token': token,
@@ -160,7 +161,7 @@ def get_expenses():
 @jwt_required()
 @limiter.limit("50 per minute")
 def add_expense():
-    user_id = get_jwt_identity()
+    user_id = int(get_jwt_identity())  # نص -> عدد
     data = request.get_json()
     required_fields = ['company_name', 'amount', 'type', 'date', 'currency']
     for f in required_fields:
@@ -189,7 +190,7 @@ def add_expense():
 @jwt_required()
 @limiter.limit("50 per minute")
 def update_expense(expense_id):
-    user_id = get_jwt_identity()
+    user_id = int(get_jwt_identity())
     data = request.get_json()
     conn = get_db()
     now = datetime.datetime.now().isoformat()
@@ -214,7 +215,7 @@ def update_expense(expense_id):
 @jwt_required()
 @limiter.limit("30 per minute")
 def delete_expense(expense_id):
-    user_id = get_jwt_identity()
+    user_id = int(get_jwt_identity())
     conn = get_db()
     row = conn.execute('SELECT company_name, amount_original, currency_original FROM expenses WHERE id = ?', (expense_id,)).fetchone()
     if row:
@@ -282,7 +283,7 @@ def delete_user(user_id):
 @jwt_required()
 @limiter.limit("10 per minute")
 def change_password():
-    user_id = get_jwt_identity()
+    user_id = int(get_jwt_identity())
     data = request.get_json()
     old_password = data.get('old_password')
     new_password = data.get('new_password')
@@ -347,6 +348,5 @@ def health():
     return jsonify({'status': 'alive'})
 
 if __name__ == '__main__':
-    # سيتم تشغيل الخادم عبر waitress من main.py --server
-    # هذا السطر لن يُستخدم عادةً
+    # يتم استدعاء الخادم عبر waitress من main.py --server أو run_server.py
     pass
