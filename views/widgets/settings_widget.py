@@ -16,6 +16,8 @@ import shutil
 import datetime
 import requests
 import socket
+import subprocess
+import sys
 
 class SettingsWidget(QWidget):
     rates_changed = pyqtSignal()
@@ -28,6 +30,8 @@ class SettingsWidget(QWidget):
         layout.setSpacing(15)
         layout.setContentsMargins(15, 15, 15, 15)
         self.repo = SettingsRepository()
+        self.server_process = None
+        self.status_timer = None
 
         self.tabs = QTabWidget()
         self.tabs.setLayoutDirection(Qt.RightToLeft)
@@ -212,7 +216,6 @@ class SettingsWidget(QWidget):
         self.server_url_edit.setText(server_url)
         form.addRow("عنوان الخادم البعيد:", self.server_url_edit)
 
-        # اختبار تلقائي
         self.connection_test_label = QLabel("")
         self.connection_test_label.setStyleSheet("font-size: 10px;")
         form.addRow(self.connection_test_label)
@@ -221,6 +224,25 @@ class SettingsWidget(QWidget):
         self.test_btn = QPushButton("🔍 اختبار الاتصال")
         self.test_btn.clicked.connect(self.test_connection)
         form.addRow(self.test_btn)
+
+        # مجموعة التحكم بالخادم (تظهر فقط في وضع الخادم)
+        self.server_control_group = QGroupBox("التحكم بالخادم المحلي")
+        control_layout = QVBoxLayout()
+        self.server_status_label = QLabel("الحالة: غير معروف")
+        self.server_status_label.setStyleSheet("font-weight: bold;")
+        control_layout.addWidget(self.server_status_label)
+
+        btn_layout = QHBoxLayout()
+        self.start_server_btn = QPushButton("▶️ تشغيل الخادم")
+        self.start_server_btn.clicked.connect(self.start_server_process)
+        self.stop_server_btn = QPushButton("⏹️ إيقاف الخادم")
+        self.stop_server_btn.clicked.connect(self.stop_server_process)
+        btn_layout.addWidget(self.start_server_btn)
+        btn_layout.addWidget(self.stop_server_btn)
+        control_layout.addLayout(btn_layout)
+        self.server_control_group.setLayout(control_layout)
+        form.addRow(self.server_control_group)
+        self.server_control_group.setVisible(False)
 
         save_btn = QPushButton("حفظ الإعدادات")
         save_btn.clicked.connect(self.save_network_settings)
@@ -231,12 +253,79 @@ class SettingsWidget(QWidget):
         layout.addStretch()
 
         self.on_mode_changed()
+        self.status_timer = QTimer(self)
+        self.status_timer.timeout.connect(self.update_server_status)
+        self.status_timer.start(3000)
         return tab
 
     def on_mode_changed(self):
         is_client = self.mode_combo.currentIndex() == 1
+        is_server = self.mode_combo.currentIndex() == 2
         self.server_url_edit.setEnabled(is_client)
         self.test_btn.setEnabled(is_client)
+        self.server_control_group.setVisible(is_server)
+        if is_server:
+            self.update_server_status()
+        else:
+            self.server_status_label.setText("الحالة: غير متاح (ليس في وضع خادم)")
+
+    def start_server_process(self):
+        if self.server_process and self.server_process.poll() is None:
+            QMessageBox.information(self, "تنبيه", "الخادم يعمل بالفعل.")
+            return
+        try:
+            if getattr(sys, 'frozen', False):
+                exe_path = sys.executable
+                cmd = [exe_path, '--server']
+            else:
+                cmd = [sys.executable, 'run_server.py']
+            if sys.platform == 'win32':
+                self.server_process = subprocess.Popen(cmd, creationflags=subprocess.CREATE_NO_WINDOW)
+            else:
+                self.server_process = subprocess.Popen(cmd)
+            self.update_server_status()
+            QMessageBox.information(self, "نجاح", "تم تشغيل الخادم بنجاح.")
+        except Exception as e:
+            QMessageBox.critical(self, "خطأ", f"فشل تشغيل الخادم: {str(e)}")
+
+    def stop_server_process(self):
+        if not self.server_process or self.server_process.poll() is not None:
+            self.server_process = None
+            self.update_server_status()
+            QMessageBox.information(self, "تنبيه", "الخادم غير قيد التشغيل.")
+            return
+        try:
+            self.server_process.terminate()
+            import time
+            time.sleep(1)
+            if self.server_process.poll() is None:
+                self.server_process.kill()
+            self.server_process = None
+            self.update_server_status()
+            QMessageBox.information(self, "نجاح", "تم إيقاف الخادم.")
+        except Exception as e:
+            QMessageBox.critical(self, "خطأ", f"فشل إيقاف الخادم: {str(e)}")
+
+    def update_server_status(self):
+        if self.mode_combo.currentIndex() != 2:
+            return
+        running = False
+        if self.server_process and self.server_process.poll() is None:
+            running = True
+        else:
+            try:
+                resp = requests.get("http://localhost:8000/health", timeout=1)
+                if resp.status_code == 200 and resp.json().get("status") == "alive":
+                    running = True
+            except:
+                pass
+        if running:
+            self.server_status_label.setText("الحالة: ✅ يعمل")
+            self.server_status_label.setStyleSheet("color: green; font-weight: bold;")
+        else:
+            self.server_status_label.setText("الحالة: ❌ لا يعمل")
+            self.server_status_label.setStyleSheet("color: red; font-weight: bold;")
+            self.server_process = None
 
     def auto_test_connection(self):
         if self.mode_combo.currentIndex() != 1:
@@ -281,6 +370,13 @@ class SettingsWidget(QWidget):
         mode = mode_map[self.mode_combo.currentIndex()]
         self.repo.set('network_mode', mode)
         self.repo.set('network_server_url', self.server_url_edit.text())
+        if mode == 'server':
+            try:
+                resp = requests.get("http://localhost:8000/health", timeout=1)
+                if resp.status_code != 200:
+                    QMessageBox.information(self, "تنبيه", "الخادم المحلي ليس قيد التشغيل حالياً. استخدم زر 'تشغيل الخادم' لتشغيله.")
+            except:
+                QMessageBox.information(self, "تنبيه", "الخادم المحلي ليس قيد التشغيل حالياً. استخدم زر 'تشغيل الخادم' لتشغيله.")
         QMessageBox.information(self, "نجاح", "سيتم تطبيق الإعدادات بعد إعادة تشغيل التطبيق")
 
     def create_backup_tab(self):
@@ -353,7 +449,6 @@ class SettingsWidget(QWidget):
 
         layout.addStretch()
 
-        # تعطيل عناصر النسخ الاحتياطي في وضع العميل
         from database.connection import DatabaseConnection
         if DatabaseConnection().is_remote():
             self._disable_backup_controls(periodic_group)
@@ -473,7 +568,7 @@ class SettingsWidget(QWidget):
                 init_database()
                 QMessageBox.information(self, "نجاح", "تم إعادة تهيئة قاعدة البيانات المحلية. يرجى إعادة تشغيل التطبيق.")
             except PermissionError as e:
-                QMessageBox.critical(self, "خطأ", f"لا يمكن حذف الملف لأنه مستخدم من عملية أخرى.\n{str(e)}\nيرجى إغلاق أي تطبيق آخر يصل إلى قاعدة البيانات (مثل خادم Flask) ثم حاول مجدداً.")
+                QMessageBox.critical(self, "خطأ", f"لا يمكن حذف الملف لأنه مستخدم من عملية أخرى.\n{str(e)}")
             except Exception as e:
                 QMessageBox.critical(self, "خطأ", f"فشل إعادة التهيئة: {str(e)}")
 

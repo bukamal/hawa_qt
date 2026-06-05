@@ -35,10 +35,12 @@ def on_license_invalid():
     QTimer.singleShot(0, show)
 
 def run_flask_server():
-    """تشغيل خادم Flask في عملية فرعية مستقلة"""
+    """تشغيل خادم Flask في عملية منفصلة (نفس الـ exe مع معامل --server)"""
     error_log = os.path.join(tempfile.gettempdir(), "hawaa_subprocess_error.log")
     try:
         exe_path = sys.executable
+        if not os.path.exists(exe_path):
+            exe_path = sys.executable
         cmd = [exe_path, '--server']
         if sys.platform == 'win32':
             subprocess.Popen(cmd, creationflags=subprocess.CREATE_NO_WINDOW)
