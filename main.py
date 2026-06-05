@@ -5,8 +5,8 @@ import threading
 import time
 import datetime
 import shutil
-from PyQt5.QtWidgets import QApplication, QMessageBox
-from PyQt5.QtCore import QTimer, QSettings
+from PyQt5.QtWidgets import QApplication, QMessageBox, QDialog, QVBoxLayout, QDialogButtonBox
+from PyQt5.QtCore import QTimer, QSettings, Qt
 from PyQt5.QtGui import QFont
 from database import ensure_db
 from auth.activation import check_activation, start_license_checker, stop_license_checker
@@ -51,7 +51,6 @@ def periodic_backup_worker(interval_seconds, folder, db_path):
 
 def start_periodic_backup():
     global _backup_stop_event, _backup_thread
-    # منع النسخ الاحتياطي في وضع العميل
     from database.connection import DatabaseConnection
     db = DatabaseConnection()
     if db._use_http():
@@ -126,10 +125,23 @@ def main():
                     QMessageBox.Yes | QMessageBox.No,
                     QMessageBox.No)
                 if reply == QMessageBox.No:
+                    # فتح نافذة الإعدادات كحوار
                     from views.widgets.settings_widget import SettingsWidget
-                    dlg = SettingsWidget()
-                    dlg.exec()
-                    sys.exit(0)
+                    dialog = QDialog()
+                    dialog.setWindowTitle("إعدادات الشبكة")
+                    dialog.setLayoutDirection(Qt.RightToLeft)
+                    dialog.resize(600, 500)
+                    layout = QVBoxLayout(dialog)
+                    settings_widget = SettingsWidget(dialog)
+                    layout.addWidget(settings_widget)
+                    # إضافة أزرار موافق/إلغاء
+                    button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+                    button_box.accepted.connect(dialog.accept)
+                    button_box.rejected.connect(dialog.reject)
+                    layout.addWidget(button_box)
+                    if dialog.exec() == QDialog.Accepted:
+                        QMessageBox.information(None, "تم الحفظ", "سيتم إعادة تشغيل التطبيق لتطبيق الإعدادات.")
+                    sys.exit(0)  # الخروج لأن الإعدادات قد تغيرت
                 else:
                     use_local = True
                     QMessageBox.information(None, "تنبيه",

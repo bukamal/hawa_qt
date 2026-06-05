@@ -3,8 +3,33 @@ import sqlite3
 import requests
 import threading
 import os
+import sys
 
-DB_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'hawaa_data.db')
+# تحديد مسار قاعدة البيانات المناسب حسب النظام
+def get_db_path():
+    if getattr(sys, 'frozen', False):
+        # إذا كان التطبيق مجمداً (PyInstaller)
+        base_dir = os.path.dirname(sys.executable)
+    else:
+        base_dir = os.path.dirname(os.path.dirname(__file__))
+    
+    # محاولة استخدام مجلد AppData على ويندوز، أو مجلد المستخدم على لينكس/ماك
+    if os.name == 'nt':  # Windows
+        appdata = os.environ.get('APPDATA', os.path.expanduser('~\\AppData\\Roaming'))
+        data_dir = os.path.join(appdata, 'Hawaa')
+    else:
+        data_dir = os.path.expanduser('~/.hawaa')
+    
+    try:
+        os.makedirs(data_dir, exist_ok=True)
+    except:
+        # إذا فشل الإنشاء، نستخدم المجلد المحلي (قد يكون مقيداً)
+        data_dir = base_dir
+    
+    return os.path.join(data_dir, 'hawaa_data.db')
+
+DB_PATH = get_db_path()
+
 SERVER_URL = os.environ.get('HAWAA_SERVER', '')
 
 class DatabaseConnection:

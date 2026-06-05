@@ -6,15 +6,11 @@ from database.connection import DatabaseConnection, DB_PATH
 from auth.password import hash_password
 
 def init_database():
-    # في وضع HTTP، لا حاجة لإنشاء قاعدة بيانات محلية إذا كان الملف غير موجود
-    # لكننا ننشئها فقط إذا كنا في وضع SQLite المحلي
     db = DatabaseConnection()
     if db._use_http():
-        # وضع العميل: لا ننشئ قاعدة بيانات محلية، بل نعتمد على الخادم
         print("⚠️ وضع العميل: قاعدة البيانات على الخادم، لا حاجة لإنشاء محلي.")
         return
 
-    # وضع SQLite المحلي
     conn = db.get_connection()
     cursor = conn.cursor()
 
@@ -90,7 +86,6 @@ def init_database():
         INSERT OR IGNORE INTO settings (key, value) VALUES ('abbreviate_numbers', 'false');
     ''')
 
-    # إعدادات الشركة الافتراضية
     cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('company_name', 'هوى الشام للسياحة والسفر')")
     cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('company_address', 'المملكة العربية السعودية - الرياض')")
     cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('company_phone', '+966 12 3456789')")
@@ -117,13 +112,11 @@ def init_database():
         ''', ('admin', pwd_hash, salt, 'المدير العام', 'admin', now, 1))
 
     conn.commit()
-    print("✅ تم تهيئة قاعدة البيانات المحلية")
+    print(f"✅ تم تهيئة قاعدة البيانات المحلية في: {DB_PATH}")
 
 def ensure_db():
-    # فقط إذا كنا في وضع SQLite المحلي (ليس HTTP) نقوم بإنشاء/تحديث
     db = DatabaseConnection()
     if db._use_http():
-        # في وضع العميل، لا نتأكد من وجود قاعدة بيانات محلية
         return
     if not os.path.exists(DB_PATH):
         init_database()
