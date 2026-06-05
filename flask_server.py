@@ -18,10 +18,11 @@ app.config['JWT_BLACKLIST_TOKEN_CHECKS'] = ['access']
 
 jwt = JWTManager(app)
 
+# رفع الحدود الافتراضية لتقليل احتمالية 429
 limiter = Limiter(
     get_remote_address,
     app=app,
-    default_limits=["200 per minute", "20 per second"],
+    default_limits=["500 per minute", "30 per second"],
     storage_uri="memory://",
 )
 
@@ -320,10 +321,10 @@ def delete_old_audit_logs():
     log_audit('حذف سجلات تدقيق قديمة', 'audit_log', 0, f'أقدم من {days} يوماً', request)
     return jsonify({'status': 'ok'})
 
-# ------------------- الإعدادات -------------------
+# ------------------- الإعدادات (رفع الحد بشكل كبير) -------------------
 @app.route('/api/settings/<key>', methods=['GET'])
 @jwt_required()
-@limiter.limit("100 per minute")
+@limiter.limit("500 per minute")  # تم رفع الحد من 100 إلى 500
 def get_setting(key):
     conn = get_db()
     row = conn.execute('SELECT value FROM settings WHERE key = ?', (key,)).fetchone()
@@ -344,6 +345,7 @@ def set_setting(key):
 # ------------------- أسعار الصرف -------------------
 @app.route('/api/exchange_rates', methods=['GET'])
 @jwt_required()
+@limiter.limit("200 per minute")  # نقطة أسعار الصرف أيضاً
 def get_exchange_rates():
     conn = get_db()
     rows = conn.execute('SELECT currency_code, rate_to_usd, updated_at FROM exchange_rates ORDER BY currency_code').fetchall()

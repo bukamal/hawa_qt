@@ -175,6 +175,9 @@ class DatabaseConnection:
 
     def get_setting(self, key: str, default=None):
         if self.mode == "client":
+            # إذا لم يكن هناك rest_client أو لم يتم تعيين توكن بعد، نعيد القيمة الافتراضية
+            if self._rest_client is None or self._rest_client.token is None:
+                return default
             val = self._rest_client.get_setting(key)
             return val if val is not None else default
         conn = self.get_connection()

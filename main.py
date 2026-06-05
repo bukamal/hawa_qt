@@ -126,6 +126,22 @@ def test_server_connection(url):
     except:
         return False
 
+def open_network_settings():
+    """فتح نافذة إعدادات الشبكة وإرجاع True إذا حفظ المستخدم الإعدادات، وإلا False"""
+    from views.widgets.settings_widget import SettingsWidget
+    dialog = QDialog()
+    dialog.setWindowTitle("إعدادات الشبكة")
+    dialog.setLayoutDirection(Qt.RightToLeft)
+    dialog.resize(600, 500)
+    layout = QVBoxLayout(dialog)
+    settings_widget = SettingsWidget(dialog)
+    layout.addWidget(settings_widget)
+    button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+    button_box.accepted.connect(dialog.accept)
+    button_box.rejected.connect(dialog.reject)
+    layout.addWidget(button_box)
+    return dialog.exec() == QDialog.Accepted
+
 def main():
     # إذا تم تشغيل التطبيق كخادم منفصل
     if len(sys.argv) > 1 and sys.argv[1] == '--server':
@@ -157,33 +173,15 @@ def main():
         os.environ['HAWAA_MODE'] = 'server'
     elif mode == "client":
         os.environ['HAWAA_MODE'] = 'client'
+        # التحقق من الاتصال بالخادم
         if not test_server_connection(server_url):
-            reply = QMessageBox.question(None, "تحذير الاتصال بالخادم",
-                f"لا يمكن الاتصال بالخادم المحدد:\n{server_url}\n\n"
-                "هل تريد المتابعة باستخدام قاعدة البيانات المحلية؟\n"
-                "(اختر 'لا' لفتح إعدادات الشبكة وتعديل العنوان)",
-                QMessageBox.Yes | QMessageBox.No,
-                QMessageBox.No)
-            if reply == QMessageBox.No:
-                from views.widgets.settings_widget import SettingsWidget
-                dialog = QDialog()
-                dialog.setWindowTitle("إعدادات الشبكة")
-                dialog.setLayoutDirection(Qt.RightToLeft)
-                dialog.resize(600, 500)
-                layout = QVBoxLayout(dialog)
-                settings_widget = SettingsWidget(dialog)
-                layout.addWidget(settings_widget)
-                button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-                button_box.accepted.connect(dialog.accept)
-                button_box.rejected.connect(dialog.reject)
-                layout.addWidget(button_box)
-                if dialog.exec() == QDialog.Accepted:
-                    QMessageBox.information(None, "تم الحفظ", "سيتم إعادة تشغيل التطبيق لتطبيق الإعدادات.")
-                sys.exit(0)
-            else:
-                db_conn.mode = 'local'
-                os.environ['HAWAA_MODE'] = 'local'
-                QMessageBox.information(None, "تنبيه", "سيتم استخدام قاعدة البيانات المحلية.")
+            # لا نعرض خيار التحويل إلى محلي؛ نفتح إعدادات الشبكة مباشرة
+            QMessageBox.critical(None, "خطأ في الاتصال",
+                                 f"لا يمكن الاتصال بالخادم المحدد:\n{server_url}\n\n"
+                                 "سيتم فتح إعدادات الشبكة لتعديل العنوان.")
+            if open_network_settings():
+                QMessageBox.information(None, "تم الحفظ", "سيتم إعادة تشغيل التطبيق لتطبيق الإعدادات.")
+            sys.exit(0)
     else:  # local
         os.environ['HAWAA_MODE'] = 'local'
 

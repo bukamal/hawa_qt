@@ -17,19 +17,35 @@ class RestClient:
             headers['Authorization'] = f'Bearer {self.token}'
         return headers
 
-    def _request(self, method, endpoint, data=None, retries=3, backoff=1.0):
+    def _request(self, method, endpoint, data=None, retries=5, backoff=1.0):
+        """إرسال طلب مع إعادة محاولة ذكية، ومعالجة خاصة لـ 429 (Too Many Requests)"""
         url = f"{self.server_url}{endpoint}"
         last_exception = None
         for attempt in range(retries):
             try:
                 resp = requests.request(method, url, json=data, headers=self._headers(), timeout=10)
+                # معالجة 429: انتظار أطول وإعادة المحاولة
+                if resp.status_code == 429:
+                    wait_time = min(30, backoff * (4 ** attempt))  # زيادة أسية أسرع
+                    print(f"⚠️ تجاوز حد الطلبات (429). إعادة المحاولة بعد {wait_time:.1f} ثانية...")
+                    time.sleep(wait_time)
+                    continue
                 if resp.status_code >= 400:
                     raise Exception(f"API error {resp.status_code}: {resp.text}")
                 return resp.json() if resp.text else None
+            except requests.exceptions.Timeout as e:
+                last_exception = e
+                if attempt < retries - 1:
+                    wait_time = backoff * (2 ** attempt)
+                    print(f"⚠️ مهلة الاتصال (timeout). إعادة المحاولة {attempt+1}/{retries} بعد {wait_time:.1f} ثانية...")
+                    time.sleep(wait_time)
+                else:
+                    raise Exception(f"Failed after {retries} attempts: {str(e)}")
             except Exception as e:
                 last_exception = e
                 if attempt < retries - 1:
-                    time.sleep(backoff * (2 ** attempt))
+                    wait_time = backoff * (2 ** attempt)
+                    time.sleep(wait_time)
                 else:
                     raise Exception(f"Failed after {retries} attempts: {str(e)}")
         raise last_exception

@@ -18,6 +18,7 @@ import requests
 import socket
 import subprocess
 import sys
+import time
 
 class SettingsWidget(QWidget):
     rates_changed = pyqtSignal()
@@ -399,8 +400,7 @@ class SettingsWidget(QWidget):
         self.backup_folder.setPlaceholderText("مجلد حفظ النسخ الاحتياطية")
 
         browse_btn = QPushButton("استعراض")
-        browse_btn.clicked.connect(lambda: self._select_backup_folder(self.backup_folder))
-
+        browse_btn.clicked.connect(self._browse_backup_folder)
         periodic_layout.addRow(self.backup_enabled)
         periodic_layout.addRow("كل:", self.backup_interval)
         periodic_layout.addRow("مجلد الوجهة:", self.backup_folder)
@@ -460,6 +460,11 @@ class SettingsWidget(QWidget):
         self.load_backup_settings()
         self.update_license_status()
         return tab
+
+    def _browse_backup_folder(self):
+        folder = QFileDialog.getExistingDirectory(self, "اختر مجلد النسخ الاحتياطي")
+        if folder:
+            self.backup_folder.setText(folder)
 
     def _disable_backup_controls(self, container):
         for child in container.findChildren(QPushButton):
@@ -541,14 +546,28 @@ class SettingsWidget(QWidget):
         from database.connection import DB_PATH
         filename, _ = QFileDialog.getOpenFileName(self, "استيراد قاعدة البيانات", "", "SQLite (*.db)")
         if filename:
-            reply = QMessageBox.question(self, "تأكيد", "سيتم استبدال قاعدة البيانات المحلية الحالية. تأكيد؟",
-                                         QMessageBox.Yes | QMessageBox.No)
+            reply = QMessageBox.question(self, "تأكيد", 
+                "سيتم استبدال قاعدة البيانات المحلية الحالية.\n"
+                "إذا كان خادم Flask يعمل، سيتم إيقافه مؤقتاً ثم إعادة تشغيله.\n"
+                "تأكيد الاستيراد؟",
+                QMessageBox.Yes | QMessageBox.No)
             if reply == QMessageBox.Yes:
+                was_running = self._stop_backend_server(show_message=False)
                 try:
+                    db_conn = DatabaseConnection()
+                    db_conn.close()
+                    time.sleep(0.5)
                     shutil.copy2(filename, DB_PATH)
-                    QMessageBox.information(self, "نجاح", "تم الاستيراد. يرجى إعادة تشغيل التطبيق.")
+                    QMessageBox.information(self, "نجاح", "تم الاستيراد.")
                 except Exception as e:
                     QMessageBox.critical(self, "خطأ", f"فشل الاستيراد: {str(e)}")
+                    if was_running:
+                        self._start_backend_server()
+                    return
+                if was_running:
+                    self._start_backend_server()
+                self.load_rates_table()
+                QMessageBox.information(self, "تنبيه", "يرجى إعادة تشغيل التطبيق لتحديث جميع المكونات.")
 
     def reset_database(self):
         from database.connection import DatabaseConnection
@@ -556,23 +575,87 @@ class SettingsWidget(QWidget):
             QMessageBox.warning(self, "تنبيه", "لا يمكن إعادة تهيئة قاعدة البيانات في وضع العميل.")
             return
         from database.connection import DB_PATH
-        reply = QMessageBox.question(self, "تأكيد خطير", "سيتم حذف كل البيانات وإعادة تهيئة قاعدة البيانات المحلية.\nلا يمكن التراجع. متابعة؟",
-                                     QMessageBox.Yes | QMessageBox.No)
+        reply = QMessageBox.question(self, "تأكيد خطير", 
+            "سيتم حذف كل البيانات وإعادة تهيئة قاعدة البيانات المحلية.\n"
+            "إذا كان خادم Flask يعمل، سيتم إيقافه مؤقتاً ثم إعادة تشغيله.\n"
+            "لا يمكن التراجع. متابعة؟",
+            QMessageBox.Yes | QMessageBox.No)
         if reply == QMessageBox.Yes:
+            was_running = self._stop_backend_server(show_message=False)
             try:
                 db_conn = DatabaseConnection()
                 db_conn.close()
-                import time
                 time.sleep(0.5)
                 if os.path.exists(DB_PATH):
                     os.remove(DB_PATH)
                 from database.migrations import init_database
                 init_database()
-                QMessageBox.information(self, "نجاح", "تم إعادة تهيئة قاعدة البيانات المحلية. يرجى إعادة تشغيل التطبيق.")
+                QMessageBox.information(self, "نجاح", "تم إعادة تهيئة قاعدة البيانات المحلية.")
             except PermissionError as e:
-                QMessageBox.critical(self, "خطأ", f"لا يمكن حذف الملف لأنه مستخدم من عملية أخرى.\n{str(e)}")
+                QMessageBox.critical(self, "خطأ", f"لا يمكن حذف الملف لأنه مستخدم من عملية أخرى.\n{str(e)}\nيرجى إغلاق أي تطبيق آخر يصل إلى قاعدة البيانات (مثل خادم Flask) ثم حاول مجدداً.")
+                if was_running:
+                    self._start_backend_server()
+                return
             except Exception as e:
                 QMessageBox.critical(self, "خطأ", f"فشل إعادة التهيئة: {str(e)}")
+                if was_running:
+                    self._start_backend_server()
+                return
+            if was_running:
+                self._start_backend_server()
+            self.load_rates_table()
+            QMessageBox.information(self, "تنبيه", "يرجى إعادة تشغيل التطبيق لتحديث جميع المكونات.")
+
+    # دوال إيقاف/تشغيل الخادم الخلفي
+    def _is_backend_server_running(self):
+        if self.server_process and self.server_process.poll() is None:
+            return True
+        try:
+            resp = requests.get("http://localhost:8000/health", timeout=1)
+            return resp.status_code == 200 and resp.json().get("status") == "alive"
+        except:
+            return False
+
+    def _stop_backend_server(self, show_message=True):
+        if self.server_process and self.server_process.poll() is None:
+            try:
+                self.server_process.terminate()
+                time.sleep(1)
+                if self.server_process.poll() is None:
+                    self.server_process.kill()
+                self.server_process = None
+                if show_message:
+                    QMessageBox.information(self, "إيقاف الخادم", "تم إيقاف خادم Flask الخلفي مؤقتاً.")
+                return True
+            except Exception as e:
+                if show_message:
+                    QMessageBox.warning(self, "تحذير", f"فشل إيقاف الخادم: {str(e)}")
+                return False
+        return False
+
+    def _start_backend_server(self, show_message=True):
+        from database.connection import DatabaseConnection
+        db = DatabaseConnection()
+        if db.mode != "server":
+            return
+        if self._is_backend_server_running():
+            return
+        try:
+            if getattr(sys, 'frozen', False):
+                exe_path = sys.executable
+                cmd = [exe_path, '--server']
+            else:
+                cmd = [sys.executable, 'run_server.py']
+            if sys.platform == 'win32':
+                self.server_process = subprocess.Popen(cmd, creationflags=subprocess.CREATE_NO_WINDOW)
+            else:
+                self.server_process = subprocess.Popen(cmd)
+            time.sleep(2)
+            if show_message:
+                QMessageBox.information(self, "تشغيل الخادم", "تم إعادة تشغيل خادم Flask الخلفي.")
+        except Exception as e:
+            if show_message:
+                QMessageBox.critical(self, "خطأ", f"فشل تشغيل الخادم: {str(e)}")
 
     def update_license_status(self):
         from auth.activation import check_activation
