@@ -6,6 +6,7 @@ import time
 import datetime
 import shutil
 import requests
+import tempfile
 from PyQt5.QtWidgets import QApplication, QMessageBox, QDialog, QVBoxLayout, QDialogButtonBox
 from PyQt5.QtCore import QTimer, QSettings, Qt
 from PyQt5.QtGui import QFont
@@ -33,11 +34,10 @@ def on_license_invalid():
     QTimer.singleShot(0, show)
 
 def run_flask_server():
-    """تشغيل خادم Flask مع تسجيل الأخطاء"""
-    error_log = os.path.expanduser("~/hawaa_server_crash.log")
+    """تشغيل خادم Flask مع تسجيل الأخطاء في مجلد مؤقت آمن"""
+    error_log = os.path.join(tempfile.gettempdir(), "hawaa_server_crash.log")
     try:
         from flask_server import app
-        # تعطيل إعادة التحميل التلقائي
         app.run(host='0.0.0.0', port=8000, threaded=True, debug=False, use_reloader=False)
     except Exception as e:
         with open(error_log, "w", encoding='utf-8') as f:
@@ -45,12 +45,11 @@ def run_flask_server():
             f.write(str(e))
             import traceback
             traceback.print_exc(file=f)
-        # محاولة إظهار رسالة للمستخدم عبر QTimer (لأننا في thread مختلف)
         def show_error():
             QMessageBox.critical(None, "خطأ في الخادم",
                                 f"فشل بدء خادم Flask.\nتم تسجيل الخطأ في:\n{error_log}")
         QTimer.singleShot(0, show_error)
-        raise  # نعيد رفع الاستثناء لإنهاء الخيط
+        raise
 
 def wait_for_server(url, timeout=10):
     start = time.time()
@@ -140,7 +139,7 @@ def main():
         server_thread = threading.Thread(target=run_flask_server, daemon=True)
         server_thread.start()
         if not wait_for_server("http://localhost:8000"):
-            QMessageBox.critical(None, "خطأ", "فشل بدء الخادم الداخلي. تحقق من المنفذ 8000 أو جدار الحماية.\nتم تسجيل التفاصيل في ملف ~/hawaa_server_crash.log")
+            QMessageBox.critical(None, "خطأ", "فشل بدء الخادم الداخلي. تحقق من المنفذ 8000 أو جدار الحماية.\nتم تسجيل التفاصيل في ملف مؤقت.")
             sys.exit(1)
         QMessageBox.information(None, "خادم", "تم بدء الخادم بنجاح. يمكن للأجهزة الأخرى الاتصال به.")
         os.environ['HAWAA_MODE'] = 'server'
