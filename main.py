@@ -5,6 +5,7 @@ import threading
 import time
 import datetime
 import shutil
+import requests
 from PyQt5.QtWidgets import QApplication, QMessageBox, QDialog, QVBoxLayout, QDialogButtonBox
 from PyQt5.QtCore import QTimer, QSettings, Qt
 from PyQt5.QtGui import QFont
@@ -34,6 +35,18 @@ def on_license_invalid():
 def run_flask_server():
     from flask_server import app
     app.run(host='0.0.0.0', port=8000, threaded=True, debug=False, use_reloader=False)
+
+def wait_for_server(url, timeout=10):
+    start = time.time()
+    while time.time() - start < timeout:
+        try:
+            resp = requests.get(f"{url}/health", timeout=1)
+            if resp.status_code == 200 and resp.json().get('status') == 'alive':
+                return True
+        except:
+            pass
+        time.sleep(0.5)
+    return False
 
 def periodic_backup_worker(interval_seconds, folder, db_path):
     global _backup_stop_event
@@ -88,7 +101,6 @@ def restart_backup():
     return new_thread
 
 def test_server_connection(url):
-    import requests
     try:
         resp = requests.get(f"{url}/health", timeout=3)
         return resp.status_code == 200 and resp.json().get("status") == "alive"
@@ -102,22 +114,22 @@ def main():
 
     settings = QSettings("Hawaa", "Accounting")
     
-    # قراءة وضع الشبكة من الإعدادات
     from database.connection import DatabaseConnection
-    db_conn = DatabaseConnection()  # يقرأ الوضع من QSettings
-    mode = db_conn.mode  # local, client, server
+    db_conn = DatabaseConnection()
+    mode = db_conn.mode
     server_url = db_conn.server_url
 
     if mode == "server":
         # تشغيل خادم Flask في thread منفصل
         server_thread = threading.Thread(target=run_flask_server, daemon=True)
         server_thread.start()
-        time.sleep(2)  # انتظار بدء الخادم
-        # في وضع الخادم، التطبيق يعمل محلياً (لا يستخدم REST)
+        if not wait_for_server("http://localhost:8000"):
+            QMessageBox.critical(None, "خطأ", "فشل بدء الخادم الداخلي. تحقق من المنفذ 8000 أو جدار الحماية.")
+            sys.exit(1)
+        QMessageBox.information(None, "خادم", "تم بدء الخادم بنجاح. يمكن للأجهزة الأخرى الاتصال به.")
         os.environ['HAWAA_MODE'] = 'server'
     elif mode == "client":
         os.environ['HAWAA_MODE'] = 'client'
-        # التحقق من الاتصال بالخادم
         if not test_server_connection(server_url):
             reply = QMessageBox.question(None, "تحذير الاتصال بالخادم",
                 f"لا يمكن الاتصال بالخادم المحدد:\n{server_url}\n\n"
@@ -142,7 +154,6 @@ def main():
                     QMessageBox.information(None, "تم الحفظ", "سيتم إعادة تشغيل التطبيق لتطبيق الإعدادات.")
                 sys.exit(0)
             else:
-                # تبديل إلى الوضع المحلي
                 db_conn.mode = 'local'
                 os.environ['HAWAA_MODE'] = 'local'
                 QMessageBox.information(None, "تنبيه", "سيتم استخدام قاعدة البيانات المحلية.")

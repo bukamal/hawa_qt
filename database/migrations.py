@@ -66,6 +66,11 @@ def init_database():
             rate_to_usd REAL NOT NULL,
             updated_at TEXT
         );
+
+        CREATE TABLE IF NOT EXISTS token_blacklist (
+            jti TEXT PRIMARY KEY,
+            created_at TEXT
+        );
     ''')
 
     cursor.executescript('''
@@ -133,6 +138,15 @@ def ensure_db():
             if 'exchange_rate_to_usd' not in columns:
                 cursor.execute("ALTER TABLE expenses ADD COLUMN exchange_rate_to_usd REAL NOT NULL DEFAULT 1.0")
             cursor.execute("UPDATE expenses SET amount_original = amount, currency_original = currency, exchange_rate_to_usd = 1.0 WHERE amount_original = 0")
+            # التأكد من وجود جدول token_blacklist في القواعد القديمة
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='token_blacklist'")
+            if not cursor.fetchone():
+                cursor.execute('''
+                    CREATE TABLE token_blacklist (
+                        jti TEXT PRIMARY KEY,
+                        created_at TEXT
+                    )
+                ''')
             conn.commit()
             conn.close()
         except Exception as e:

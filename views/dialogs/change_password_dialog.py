@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 from PyQt5.QtWidgets import QFormLayout, QLineEdit, QPushButton, QHBoxLayout, QVBoxLayout, QMessageBox
 from PyQt5.QtCore import Qt
 from views.frameless_dialog import FramelessDialog
@@ -14,7 +15,7 @@ class ChangePasswordDialog(FramelessDialog):
         self.resize(450, 300)
         layout = QVBoxLayout(self.content_widget)
         layout.setSpacing(16)
-        layout.setContentsMargins(20,20,20,20)
+        layout.setContentsMargins(20, 20, 20, 20)
         
         form = QFormLayout()
         form.setLabelAlignment(Qt.AlignRight)
@@ -57,4 +58,3 @@ class ChangePasswordDialog(FramelessDialog):
             self.accept()
         else:
             QMessageBox.warning(self, translate('error'), "كلمة المرور الحالية غير صحيحة")
-

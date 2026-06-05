@@ -3,38 +3,127 @@
 import sqlite3
 import os
 import datetime
-from flask import Flask, request, jsonify
-from flask_jwt_extended import JWTManager, create_access_token, jwt_required, get_jwt_identity
+from functools import wraps
+from flask import Flask, request, jsonify, g
+from flask_jwt_extended import JWTManager, create_access_token, jwt_required, get_jwt_identity, get_jwt
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 
 app = Flask(__name__)
 app.config['JWT_SECRET_KEY'] = os.environ.get('JWT_SECRET', 'hawaa-secret-key-change-me')
 app.config['JWT_ACCESS_TOKEN_EXPIRES'] = datetime.timedelta(hours=8)
+app.config['JWT_BLACKLIST_ENABLED'] = True
+app.config['JWT_BLACKLIST_TOKEN_CHECKS'] = ['access']
+
 jwt = JWTManager(app)
+
+limiter = Limiter(
+    get_remote_address,
+    app=app,
+    default_limits=["200 per minute", "20 per second"],
+    storage_uri="memory://",
+)
 
 DB_PATH = os.path.join(os.path.dirname(__file__), 'hawaa_data.db')
 
-def get_db():
+# ------------------- تهيئة قاعدة البيانات -------------------
+def init_db():
+    from database.migrations import ensure_db
+    ensure_db()
     conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
+    conn.execute('PRAGMA journal_mode=WAL')
+    conn.execute('''
+        CREATE TABLE IF NOT EXISTS token_blacklist (
+            jti TEXT PRIMARY KEY,
+            created_at TEXT
+        )
+    ''')
+    conn.close()
+
+init_db()
+
+# ------------------- دوال مساعدة -------------------
+def get_db():
+    if 'db' not in g:
+        g.db = sqlite3.connect(DB_PATH)
+        g.db.row_factory = sqlite3.Row
+        g.db.execute('PRAGMA journal_mode=WAL')
+    return g.db
+
+@app.teardown_appcontext
+def close_db(error):
+    db = g.pop('db', None)
+    if db is not None:
+        db.close()
 
 def verify_password(stored_hash, salt, password):
     from auth.password import verify_password as verify
     return verify(password, stored_hash, salt)
 
+# ------------------- التحقق من القائمة السوداء -------------------
+@jwt.token_in_blocklist_loader
+def check_if_token_revoked(jwt_header, jwt_payload):
+    jti = jwt_payload['jti']
+    conn = get_db()
+    row = conn.execute('SELECT 1 FROM token_blacklist WHERE jti = ?', (jti,)).fetchone()
+    return row is not None
+
+# ------------------- RBAC -------------------
+def admin_required(fn):
+    @wraps(fn)
+    @jwt_required()
+    def wrapper(*args, **kwargs):
+        user_id = get_jwt_identity()
+        conn = get_db()
+        user = conn.execute('SELECT role FROM users WHERE id = ?', (user_id,)).fetchone()
+        if not user or user['role'] != 'admin':
+            return jsonify({'error': 'Admin privileges required'}), 403
+        return fn(*args, **kwargs)
+    return wrapper
+
+# ------------------- تسجيل التدقيق -------------------
+def log_audit(action, table_name, record_id, details, request_obj):
+    user_id = get_jwt_identity() if request_obj.headers.get('Authorization') else None
+    username = None
+    if user_id:
+        conn = get_db()
+        user = conn.execute('SELECT username FROM users WHERE id = ?', (user_id,)).fetchone()
+        username = user['username'] if user else None
+    ip = request_obj.remote_addr
+    now = datetime.datetime.now().isoformat()
+    conn = get_db()
+    conn.execute('''
+        INSERT INTO audit_log (user_id, username, action, table_name, record_id, details, ip_address, timestamp)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    ''', (user_id, username, action, table_name, record_id, details, ip, now))
+    conn.commit()
+
+# ------------------- تسجيل الخروج -------------------
+@app.route('/api/logout', methods=['POST'])
+@jwt_required()
+def logout():
+    jti = get_jwt()['jti']
+    conn = get_db()
+    now = datetime.datetime.now().isoformat()
+    conn.execute('INSERT INTO token_blacklist (jti, created_at) VALUES (?, ?)', (jti, now))
+    conn.commit()
+    log_audit('تسجيل خروج', 'auth', 0, '', request)
+    return jsonify({'status': 'logged out'}), 200
+
 # ------------------- المصادقة -------------------
 @app.route('/api/login', methods=['POST'])
+@limiter.limit("5 per minute")
 def login():
     data = request.get_json()
     username = data.get('username')
     password = data.get('password')
     conn = get_db()
     user = conn.execute('SELECT * FROM users WHERE username = ?', (username,)).fetchone()
-    conn.close()
     if not user:
         return jsonify({'error': 'Invalid credentials'}), 401
     if verify_password(user['password_hash'], user['salt'], password):
         token = create_access_token(identity=user['id'])
+        log_audit('تسجيل دخول', 'users', user['id'], f'المستخدم {username}', request)
         return jsonify({
             'token': token,
             'user': {
@@ -50,14 +139,15 @@ def login():
 # ------------------- المصروفات -------------------
 @app.route('/api/expenses', methods=['GET'])
 @jwt_required()
+@limiter.limit("100 per minute")
 def get_expenses():
     conn = get_db()
     rows = conn.execute('SELECT * FROM expenses ORDER BY id DESC').fetchall()
-    conn.close()
     return jsonify([dict(row) for row in rows])
 
 @app.route('/api/expenses', methods=['POST'])
 @jwt_required()
+@limiter.limit("50 per minute")
 def add_expense():
     user_id = get_jwt_identity()
     data = request.get_json()
@@ -81,11 +171,12 @@ def add_expense():
     ))
     conn.commit()
     new_id = cursor.lastrowid
-    conn.close()
+    log_audit('إضافة قيد', 'expenses', new_id, f"الشركة: {data['company_name']}, المبلغ: {data['amount']} {data['currency']}", request)
     return jsonify({'id': new_id}), 201
 
 @app.route('/api/expenses/<int:expense_id>', methods=['PUT'])
 @jwt_required()
+@limiter.limit("50 per minute")
 def update_expense(expense_id):
     user_id = get_jwt_identity()
     data = request.get_json()
@@ -105,33 +196,38 @@ def update_expense(expense_id):
         expense_id
     ))
     conn.commit()
-    conn.close()
+    log_audit('تعديل قيد', 'expenses', expense_id, f"الشركة: {data['company_name']}, المبلغ: {data['amount']} {data['currency']}", request)
     return jsonify({'status': 'ok'})
 
 @app.route('/api/expenses/<int:expense_id>', methods=['DELETE'])
 @jwt_required()
+@limiter.limit("30 per minute")
 def delete_expense(expense_id):
     user_id = get_jwt_identity()
     conn = get_db()
-    # تسجيل التدقيق (يمكن إضافته إذا لزم الأمر)
+    row = conn.execute('SELECT company_name, amount_original, currency_original FROM expenses WHERE id = ?', (expense_id,)).fetchone()
+    if row:
+        details = f"الشركة: {row['company_name']}, المبلغ: {row['amount_original']} {row['currency_original']}"
+    else:
+        details = ''
     conn.execute('DELETE FROM expenses WHERE id = ?', (expense_id,))
     conn.commit()
-    conn.close()
+    log_audit('حذف قيد', 'expenses', expense_id, details, request)
     return jsonify({'status': 'ok'})
 
 # ------------------- المستخدمين -------------------
 @app.route('/api/users', methods=['GET'])
-@jwt_required()
+@admin_required
+@limiter.limit("60 per minute")
 def get_users():
     conn = get_db()
     rows = conn.execute('SELECT id, username, full_name, role, created_at, last_login FROM users').fetchall()
-    conn.close()
     return jsonify([dict(row) for row in rows])
 
 @app.route('/api/users', methods=['POST'])
-@jwt_required()
+@admin_required
+@limiter.limit("20 per minute")
 def add_user():
-    current_user_id = get_jwt_identity()
     data = request.get_json()
     from auth.password import hash_password
     pwd_hash, salt = hash_password(data['password'])
@@ -143,35 +239,37 @@ def add_user():
     ''', (data['username'], pwd_hash, salt, data.get('full_name', ''), data.get('role', 'user'), now))
     conn.commit()
     new_id = cursor.lastrowid
-    conn.close()
+    log_audit('إضافة مستخدم', 'users', new_id, f"المستخدم: {data['username']}", request)
     return jsonify({'id': new_id}), 201
 
 @app.route('/api/users/<int:user_id>', methods=['PUT'])
-@jwt_required()
+@admin_required
+@limiter.limit("30 per minute")
 def update_user(user_id):
-    current_user_id = get_jwt_identity()
     data = request.get_json()
     conn = get_db()
     conn.execute('UPDATE users SET full_name=?, role=? WHERE id=?',
                  (data.get('full_name', ''), data.get('role', 'user'), user_id))
     conn.commit()
-    conn.close()
+    log_audit('تعديل مستخدم', 'users', user_id, f"الاسم: {data.get('full_name')}, صلاحية: {data.get('role')}", request)
     return jsonify({'status': 'ok'})
 
 @app.route('/api/users/<int:user_id>', methods=['DELETE'])
-@jwt_required()
+@admin_required
+@limiter.limit("20 per minute")
 def delete_user(user_id):
-    current_user_id = get_jwt_identity()
     if user_id == 1:
         return jsonify({'error': 'Cannot delete admin'}), 400
     conn = get_db()
+    user = conn.execute('SELECT username FROM users WHERE id = ?', (user_id,)).fetchone()
     conn.execute('DELETE FROM users WHERE id = ?', (user_id,))
     conn.commit()
-    conn.close()
+    log_audit('حذف مستخدم', 'users', user_id, f"المستخدم: {user['username'] if user else ''}", request)
     return jsonify({'status': 'ok'})
 
 @app.route('/api/users/change_password', methods=['POST'])
 @jwt_required()
+@limiter.limit("10 per minute")
 def change_password():
     user_id = get_jwt_identity()
     data = request.get_json()
@@ -180,57 +278,56 @@ def change_password():
     conn = get_db()
     user = conn.execute('SELECT password_hash, salt FROM users WHERE id = ?', (user_id,)).fetchone()
     if not user or not verify_password(user['password_hash'], user['salt'], old_password):
-        conn.close()
         return jsonify({'error': 'Invalid old password'}), 401
     from auth.password import hash_password
     new_hash, new_salt = hash_password(new_password)
     conn.execute('UPDATE users SET password_hash=?, salt=?, force_password_change=0 WHERE id=?',
                  (new_hash, new_salt, user_id))
     conn.commit()
-    conn.close()
+    log_audit('تغيير كلمة مرور', 'users', user_id, '', request)
     return jsonify({'status': 'ok'})
 
 # ------------------- سجل التدقيق -------------------
 @app.route('/api/audit_log', methods=['GET'])
-@jwt_required()
+@admin_required
+@limiter.limit("30 per minute")
 def get_audit_log():
     conn = get_db()
     rows = conn.execute('SELECT * FROM audit_log ORDER BY id DESC LIMIT 2000').fetchall()
-    conn.close()
     return jsonify([dict(row) for row in rows])
 
 @app.route('/api/audit_log/old', methods=['DELETE'])
-@jwt_required()
+@admin_required
+@limiter.limit("10 per minute")
 def delete_old_audit_logs():
-    current_user_id = get_jwt_identity()
-    # يمكن التحقق من صلاحية admin
     data = request.get_json()
     days = data.get('days', 90)
     cutoff = (datetime.datetime.now() - datetime.timedelta(days=days)).isoformat()
     conn = get_db()
     conn.execute('DELETE FROM audit_log WHERE timestamp < ?', (cutoff,))
     conn.commit()
-    conn.close()
+    log_audit('حذف سجلات تدقيق قديمة', 'audit_log', 0, f'أقدم من {days} يوماً', request)
     return jsonify({'status': 'ok'})
 
 # ------------------- الإعدادات -------------------
 @app.route('/api/settings/<key>', methods=['GET'])
 @jwt_required()
+@limiter.limit("100 per minute")
 def get_setting(key):
     conn = get_db()
     row = conn.execute('SELECT value FROM settings WHERE key = ?', (key,)).fetchone()
-    conn.close()
     return jsonify({'value': row['value'] if row else None})
 
 @app.route('/api/settings/<key>', methods=['POST'])
-@jwt_required()
+@admin_required
+@limiter.limit("50 per minute")
 def set_setting(key):
     data = request.get_json()
     value = data.get('value')
     conn = get_db()
     conn.execute('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', (key, value))
     conn.commit()
-    conn.close()
+    log_audit('تعديل إعداد', 'settings', 0, f'{key} = {value}', request)
     return jsonify({'status': 'ok'})
 
 # ------------------- الصحة -------------------

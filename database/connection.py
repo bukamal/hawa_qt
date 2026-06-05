@@ -51,6 +51,8 @@ class DatabaseConnection:
                 os.makedirs(os.path.dirname(LOCAL_DB_PATH), exist_ok=True)
                 self._local_conn = sqlite3.connect(LOCAL_DB_PATH, isolation_level=None)
                 self._local_conn.row_factory = sqlite3.Row
+                # تفعيل WAL للوضع المحلي
+                self._local_conn.execute('PRAGMA journal_mode=WAL')
             return self._local_conn
         else:
             return None

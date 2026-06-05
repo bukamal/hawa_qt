@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 from PyQt5.QtWidgets import QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QStackedWidget, QPushButton, QLabel, QFrame, QMessageBox, QApplication
 from PyQt5.QtCore import Qt, QPoint, QPropertyAnimation
 from PyQt5.QtGui import QIcon
@@ -20,7 +21,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowFlags(Qt.FramelessWindowHint)
         self.setAttribute(Qt.WA_TranslucentBackground)
-        self.setLayoutDirection(Qt.LeftToRight)  # LTR
+        self.setLayoutDirection(Qt.LeftToRight)
         self.setMinimumSize(1200, 700)
         self.resize(1400, 900)
         self.drag_pos = None
@@ -112,16 +113,10 @@ class MainWindow(QMainWindow):
         self.pages['dashboard'] = DashboardWidget(self)
         self.pages['accounts'] = AccountsWidget(self)
         
-        # إخفاء تبويب المستخدمين وسجل التدقيق للمشاهد
         user_role = UserSession.get_current().get('role') if UserSession.get_current() else 'user'
         if user_role == 'admin':
             self.pages['users'] = UsersWidget(self)
             self.pages['audit_log'] = AuditLogWidget(self)
-        elif user_role == 'user':
-            # المستخدم العادي لا يرى هذه التبويبات
-            pass
-        # المشاهد لا يرى هذه التبويبات أيضاً
-        
         self.pages['settings'] = SettingsWidget(self)
         self.pages['accounts'].data_changed.connect(self.pages['dashboard'].refresh_needed.emit)
         self.pages['settings'].rates_changed.connect(self.pages['accounts'].refresh_table)
@@ -241,6 +236,16 @@ class MainWindow(QMainWindow):
     def logout(self):
         reply = QMessageBox.question(self, translate('logout'), "هل تريد تسجيل الخروج؟", QMessageBox.Yes|QMessageBox.No)
         if reply == QMessageBox.Yes:
+            # إبطال التوكن في وضع العميل
+            from database.connection import DatabaseConnection
+            db = DatabaseConnection()
+            if db.is_remote():
+                try:
+                    rest_client = db.get_rest_client()
+                    if rest_client:
+                        rest_client.logout()
+                except Exception as e:
+                    print(f"Logout error: {e}")
             UserSession.logout()
             self.hide()
             login = LoginDialog(self)
@@ -307,4 +312,3 @@ class MainWindow(QMainWindow):
     def apply_theme(self, theme):
         ThemeManager.apply_theme(theme)
         self.apply_theme_to_pages()
-
