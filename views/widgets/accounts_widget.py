@@ -23,7 +23,6 @@ class AccountsWidget(QWidget):
         layout.setSpacing(12)
         layout.setContentsMargins(12, 12, 12, 12)
 
-        # شريط البحث والإضافة
         search_layout = QHBoxLayout()
         self.search_edit = QLineEdit()
         self.search_edit.setPlaceholderText(translate('search'))
@@ -37,7 +36,6 @@ class AccountsWidget(QWidget):
         search_layout.addWidget(self.add_btn)
         layout.addLayout(search_layout)
 
-        # أزرار الطباعة والتقارير
         btn_layout = QHBoxLayout()
         self.print_btn = QPushButton("🖨️ " + translate('print_report'))
         self.print_btn.clicked.connect(self.print_report)
@@ -114,21 +112,95 @@ class AccountsWidget(QWidget):
             self.table.refresh_style()
 
     def print_report(self):
-        from printing.print_manager import PrintManager
-        model = self.table.model()
-        if not model or model.rowCount() == 0:
-            QMessageBox.warning(self, translate('warning'), translate('no_data_for_print'))
+        """طباعة تقرير عام لجميع الشركات (بدون اختصار الأعداد)"""
+        repo = ExpenseRepository()
+        try:
+            expenses = repo.get_all(convert_to_display=False)
+        except Exception as e:
+            QMessageBox.critical(self, "خطأ", f"فشل تحميل البيانات: {str(e)}")
             return
-        headers = [model.headerData(i, Qt.Horizontal, Qt.DisplayRole) for i in range(model.columnCount())]
+        
+        # تجميع البيانات بنفس طريقة refresh_table ولكن بدون تنسيق
+        groups = defaultdict(lambda: {'incoming': 0.0, 'outgoing': 0.0})
+        for e in expenses:
+            groups[e['company_name']][e['type']] += e['amount']
+        
+        display_currency = currency.get_display_currency()
+        decimals = currency.get_currency_decimals()
+        symbol = currency.get_currency_symbol(display_currency)
+        
+        def format_full(amount):
+            return f"{amount:,.{decimals}f} {symbol}"
+        
         data = []
-        for row in range(model.rowCount()):
-            row_data = []
-            for col in range(model.columnCount()):
-                idx = model.index(row, col)
-                value = model.data(idx, Qt.DisplayRole)
-                row_data.append(str(value) if value else '')
-            data.append(row_data)
-        html = self.generate_html_general_report("تقرير حسابات الشركات", headers, data)
+        total_in_all = 0.0
+        total_out_all = 0.0
+        for company, vals in groups.items():
+            incoming = currency.convert(vals['incoming'], 'USD', display_currency)
+            outgoing = currency.convert(vals['outgoing'], 'USD', display_currency)
+            net = incoming - outgoing
+            total_in_all += incoming
+            total_out_all += outgoing
+            data.append([
+                company,
+                format_full(incoming),
+                format_full(outgoing),
+                format_full(net)
+            ])
+        data.sort(key=lambda x: x[0])
+        
+        headers = [translate('company_name'), translate('total_incoming'), translate('total_outgoing'), translate('net')]
+        now = datetime.now()
+        date_str = now.strftime("%Y-%m-%d %H:%M:%S")
+        
+        html = f"""<!DOCTYPE html>
+<html dir="rtl" lang="ar">
+<head><meta charset="UTF-8"><title>تقرير حسابات الشركات</title>
+<style>
+    body {{ font-family: 'Tajawal', 'Segoe UI', Tahoma, Arial; margin: 2cm; direction: rtl; background: white; }}
+    h1 {{ text-align: center; color: #2c3e50; border-bottom: 2px solid #3498db; padding-bottom: 8px; }}
+    .report-date {{ text-align: center; color: #6c757d; font-size: 12px; margin-bottom: 20px; }}
+    table {{ width: 100%; border-collapse: collapse; margin-top: 20px; }}
+    th, td {{ border: 1px solid #ddd; padding: 8px; text-align: center; }}
+    th {{ background-color: #2c3e50; color: white; font-weight: bold; }}
+    tr:nth-child(even) {{ background-color: #f2f2f2; }}
+    .footer {{ text-align: center; margin-top: 30px; font-size: 11px; color: #6c757d; border-top: 1px solid #dee2e6; padding-top: 10px; }}
+    .total-row {{ background-color: #e9ecef; font-weight: bold; }}
+</style>
+</head>
+<body>
+    <h1>تقرير حسابات الشركات</h1>
+    <div class="report-date">تاريخ الطباعة: {date_str}</div>
+    <table>
+        <thead>
+            <tr>
+"""
+        for h in headers:
+            html += f"<th>{h}</th>"
+        html += """
+             </tr>
+        </thead>
+        <tbody>
+"""
+        for row in data:
+            html += "<tr>"
+            for cell in row:
+                html += f"一位{cell}一位"
+            html += "</tr>"
+        # صف الإجمالي الكلي
+        total_net_all = total_in_all - total_out_all
+        html += f"""
+            <tr class="total-row">
+                <td><strong>الإجمالي الكلي</strong></td>
+                <td><strong>{format_full(total_in_all)}</strong></td>
+                <td><strong>{format_full(total_out_all)}</strong></td>
+                <td><strong>{format_full(total_net_all)}</strong></td>
+            </table>
+        </tbody>
+    </table>
+    <div class="footer">نظام هوى الشام للسياحة والسفر - جميع الحقوق محفوظة</div>
+</body>
+</html>"""
         fd, temp = tempfile.mkstemp(suffix='.html', prefix='hawaa_report_')
         os.close(fd)
         with open(temp, 'w', encoding='utf-8') as f:
@@ -137,109 +209,8 @@ class AccountsWidget(QWidget):
         QMessageBox.information(self, translate('print_report'), translate('report_opened_in_browser'))
 
     def generate_html_general_report(self, title, headers, data):
-        """توليد تقرير HTML لجميع الشركات مع تنسيق RTL محسن"""
-        now = datetime.now()
-        date_str = now.strftime("%Y-%m-%d %H:%M:%S")
-        
-        # حساب الإجمالي الكلي للوارد والصادر والصافي من البيانات (للعرض في التقرير)
-        total_in = 0.0
-        total_out = 0.0
-        # الأرقام في data[col] قد تحتوي على عملات، نحتاج إلى استخراج الرقم من السلسلة
-        # لكننا سنعتمد على البيانات التي في النموذج (غير معروضة مباشرة). بدلاً من ذلك، نستخدم البيانات الأصلية.
-        # نظراً لأن data تأتي من model، فإن الأعمدة هي نصوص منسقة. سنقوم بحساب المجاميع من model مباشرة.
-        # لكننا سنضيف صف الإجمالي أسفل الجدول.
-        
-        # بناء HTML
-        html = f"""<!DOCTYPE html>
-<html dir="rtl" lang="ar">
-<head>
-    <meta charset="UTF-8">
-    <title>{title}</title>
-    <style>
-        body {{
-            font-family: 'Tajawal', 'Segoe UI', Tahoma, Arial;
-            margin: 2cm;
-            direction: rtl;
-            background: white;
-        }}
-        h1 {{
-            text-align: center;
-            color: #2c3e50;
-            border-bottom: 2px solid #3498db;
-            padding-bottom: 8px;
-        }}
-        .report-date {{
-            text-align: center;
-            color: #6c757d;
-            font-size: 12px;
-            margin-bottom: 20px;
-        }}
-        table {{
-            width: 100%;
-            border-collapse: collapse;
-            margin-top: 20px;
-        }}
-        th, td {{
-            border: 1px solid #ddd;
-            padding: 8px;
-            text-align: center;
-        }}
-        th {{
-            background-color: #2c3e50;
-            color: white;
-            font-weight: bold;
-        }}
-        tr:nth-child(even) {{
-            background-color: #f2f2f2;
-        }}
-        .footer {{
-            text-align: center;
-            margin-top: 30px;
-            font-size: 11px;
-            color: #6c757d;
-            border-top: 1px solid #dee2e6;
-            padding-top: 10px;
-        }}
-        .total-row {{
-            background-color: #e9ecef;
-            font-weight: bold;
-        }}
-    </style>
-</head>
-<body>
-    <h1>{title}</h1>
-    <div class="report-date">تاريخ الطباعة: {date_str}</div>
-    <table>
-        <thead>
-            <tr>
-"""
-        # إضافة رؤوس الأعمدة
-        for h in headers:
-            html += f"<th>{h}</th>"
-        html += """
-            </tr>
-        </thead>
-        <tbody>
-"""
-        # إضافة صفوف البيانات
-        for row in data:
-            html += "<tr>"
-            for cell in row:
-                html += f"一位{cell}一位"
-            html += "</tr>"
-        
-        # صف الإجمالي (اختياري) - يمكننا حسابه من الأرقام الموجودة في الأعمدة
-        # لكن الأرقام في row_data هي نصوص منسقة مع عملات، لذا سنتجاوز هذا حالياً.
-        # يمكن تحسينه لاحقاً.
-        html += """
-        </tbody>
-    </table>
-    <div class="footer">
-        نظام هوى الشام للسياحة والسفر - جميع الحقوق محفوظة
-    </div>
-</body>
-</html>"""
-        return html
+        # هذه الدالة لم تعد مستخدمة، لكن نتركها للتوافق
+        pass
 
     def show_custom_report_dialog(self):
         dialog = QDialog(self)
@@ -349,6 +320,11 @@ class AccountsWidget(QWidget):
         dialog.accept()
 
         display_currency = currency.get_display_currency()
+        decimals = currency.get_currency_decimals()
+        symbol = currency.get_currency_symbol(display_currency)
+        
+        def format_full(amount):
+            return f"{amount:,.{decimals}f} {symbol}"
         
         total_in_usd = sum(r['amount'] for r in period_records if r['type'] == 'incoming')
         total_out_usd = sum(r['amount'] for r in period_records if r['type'] == 'outgoing')
@@ -380,7 +356,7 @@ class AccountsWidget(QWidget):
                 outgoing_str = amount_str
                 running_usd -= r['amount']
             running_display = currency.convert(running_usd, 'USD', display_currency)
-            running_str = currency.format_amount(running_display, display_currency)
+            running_str = format_full(running_display)
             row_class = "income-row" if r['type'] == 'incoming' else "expense-row"
             
             historical_rate_col = ""
@@ -409,9 +385,9 @@ class AccountsWidget(QWidget):
                 <td class="right">الرصيد الافتتاحي</td>
                 <td class="center">—</td>
                 <td class="center">—</td>
-                <td class="center">{currency.format_amount(opening_balance_display, display_currency)}</td>
+                <td class="center">{format_full(opening_balance_display)}</td>
                 {('<td class="center">—</td>' if show_historical_rate else '')}
-             </tr>
+            </tr>
 """
         closing_row = ""
         if is_cumulative:
@@ -421,9 +397,9 @@ class AccountsWidget(QWidget):
                 <td class="right">الرصيد الختامي</td>
                 <td class="center">—</td>
                 <td class="center">—</td>
-                <td class="center">{currency.format_amount(closing_balance_display, display_currency)}</td>
+                <td class="center">{format_full(closing_balance_display)}</td>
                 {('<td class="center">—</td>' if show_historical_rate else '')}
-             </tr>
+            </tr>
 """
         headers = "<th>التاريخ</th><th>ملاحظات</th><th>لنا</th><th>له</th><th>التراكمي</th>"
         if show_historical_rate:
@@ -452,12 +428,12 @@ class AccountsWidget(QWidget):
     <h1>📊 تقرير حسابات شركة: {company}</h1>
     <div class="period-info">الفترة: {start_date} إلى {end_date}</div>
     <div class="summary">
-        📥 إجمالي وارد: {currency.format_amount(total_in_display, display_currency)} &nbsp;|&nbsp;
-        📤 إجمالي صادر: {currency.format_amount(total_out_display, display_currency)} &nbsp;|&nbsp;
-        💰 صافي: {currency.format_amount(net_display, display_currency)}
+        📥 إجمالي وارد: {format_full(total_in_display)} &nbsp;|&nbsp;
+        📤 إجمالي صادر: {format_full(total_out_display)} &nbsp;|&nbsp;
+        💰 صافي: {format_full(net_display)}
     </div>
     <table>
-        <thead><tr>{headers}</tr></thead>
+        <thead><tr>{headers}</thead>
         <tbody>
             {opening_row}
             {table_rows}
