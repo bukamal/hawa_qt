@@ -137,32 +137,106 @@ class AccountsWidget(QWidget):
         QMessageBox.information(self, translate('print_report'), translate('report_opened_in_browser'))
 
     def generate_html_general_report(self, title, headers, data):
+        """توليد تقرير HTML لجميع الشركات مع تنسيق RTL محسن"""
         now = datetime.now()
         date_str = now.strftime("%Y-%m-%d %H:%M:%S")
+        
+        # حساب الإجمالي الكلي للوارد والصادر والصافي من البيانات (للعرض في التقرير)
+        total_in = 0.0
+        total_out = 0.0
+        # الأرقام في data[col] قد تحتوي على عملات، نحتاج إلى استخراج الرقم من السلسلة
+        # لكننا سنعتمد على البيانات التي في النموذج (غير معروضة مباشرة). بدلاً من ذلك، نستخدم البيانات الأصلية.
+        # نظراً لأن data تأتي من model، فإن الأعمدة هي نصوص منسقة. سنقوم بحساب المجاميع من model مباشرة.
+        # لكننا سنضيف صف الإجمالي أسفل الجدول.
+        
+        # بناء HTML
         html = f"""<!DOCTYPE html>
-<html dir="rtl">
-<head><meta charset="UTF-8"><title>{title}</title>
-<style>
-    body {{ font-family: 'Tahoma', 'Arial', sans-serif; margin: 2cm; direction: rtl; }}
-    h1 {{ text-align: center; color: #2c3e50; }}
-    table {{ width: 100%; border-collapse: collapse; margin-top: 20px; }}
-    th, td {{ border: 1px solid #ccc; padding: 8px; text-align: center; }}
-    th {{ background: #2c3e50; color: white; }}
-    .footer {{ text-align: center; margin-top: 30px; font-size: 12px; color: gray; }}
-</style>
+<html dir="rtl" lang="ar">
+<head>
+    <meta charset="UTF-8">
+    <title>{title}</title>
+    <style>
+        body {{
+            font-family: 'Tajawal', 'Segoe UI', Tahoma, Arial;
+            margin: 2cm;
+            direction: rtl;
+            background: white;
+        }}
+        h1 {{
+            text-align: center;
+            color: #2c3e50;
+            border-bottom: 2px solid #3498db;
+            padding-bottom: 8px;
+        }}
+        .report-date {{
+            text-align: center;
+            color: #6c757d;
+            font-size: 12px;
+            margin-bottom: 20px;
+        }}
+        table {{
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+        }}
+        th, td {{
+            border: 1px solid #ddd;
+            padding: 8px;
+            text-align: center;
+        }}
+        th {{
+            background-color: #2c3e50;
+            color: white;
+            font-weight: bold;
+        }}
+        tr:nth-child(even) {{
+            background-color: #f2f2f2;
+        }}
+        .footer {{
+            text-align: center;
+            margin-top: 30px;
+            font-size: 11px;
+            color: #6c757d;
+            border-top: 1px solid #dee2e6;
+            padding-top: 10px;
+        }}
+        .total-row {{
+            background-color: #e9ecef;
+            font-weight: bold;
+        }}
+    </style>
 </head>
 <body>
-<h1>{title}</h1>
-<table>
-<thead><tr>{"".join(f'<th>{h}</th>' for h in headers)}</thead>
-<tbody>
+    <h1>{title}</h1>
+    <div class="report-date">تاريخ الطباعة: {date_str}</div>
+    <table>
+        <thead>
+            <tr>
 """
+        # إضافة رؤوس الأعمدة
+        for h in headers:
+            html += f"<th>{h}</th>"
+        html += """
+            </tr>
+        </thead>
+        <tbody>
+"""
+        # إضافة صفوف البيانات
         for row in data:
-            html += "<td>" + "".join(f"一位{cell}一位" for cell in row) + "</tr>"
-        html += f"""
-</tbody>
-</table>
-<div class="footer">تاريخ الطباعة: {date_str}<br>هوى الشام للسياحة والسفر</div>
+            html += "<tr>"
+            for cell in row:
+                html += f"一位{cell}一位"
+            html += "</tr>"
+        
+        # صف الإجمالي (اختياري) - يمكننا حسابه من الأرقام الموجودة في الأعمدة
+        # لكن الأرقام في row_data هي نصوص منسقة مع عملات، لذا سنتجاوز هذا حالياً.
+        # يمكن تحسينه لاحقاً.
+        html += """
+        </tbody>
+    </table>
+    <div class="footer">
+        نظام هوى الشام للسياحة والسفر - جميع الحقوق محفوظة
+    </div>
 </body>
 </html>"""
         return html
@@ -266,10 +340,8 @@ class AccountsWidget(QWidget):
 
         repo = ExpenseRepository()
         all_records = repo.get_by_company(company, convert_to_display=False)
-        # ترتيب جميع القيود حسب التاريخ (لحساب الرصيد الافتتاحي والتراكمي)
         all_records.sort(key=lambda x: x['date'])
         
-        # تصفية القيود داخل الفترة لعرضها في الجدول
         period_records = [r for r in all_records if start_date <= r['date'] <= end_date]
         if not period_records:
             QMessageBox.warning(self, "تنبيه", "لا توجد بيانات لهذه الشركة خلال الفترة المحددة")
@@ -278,7 +350,6 @@ class AccountsWidget(QWidget):
 
         display_currency = currency.get_display_currency()
         
-        # حساب الإجماليات للفترة فقط (لأنها تعرض في الملخص)
         total_in_usd = sum(r['amount'] for r in period_records if r['type'] == 'incoming')
         total_out_usd = sum(r['amount'] for r in period_records if r['type'] == 'outgoing')
         net_usd = total_in_usd - total_out_usd
@@ -286,14 +357,12 @@ class AccountsWidget(QWidget):
         total_out_display = currency.convert(total_out_usd, 'USD', display_currency)
         net_display = currency.convert(net_usd, 'USD', display_currency)
         
-        # حساب الرصيد الافتتاحي (للتقرير التراكمي)
         opening_balance_usd = 0.0
         if is_cumulative:
             opening_records = [r for r in all_records if r['date'] < start_date]
             opening_balance_usd = sum(r['amount'] if r['type'] == 'incoming' else -r['amount'] for r in opening_records)
         opening_balance_display = currency.convert(opening_balance_usd, 'USD', display_currency)
         
-        # إنشاء الجدول
         table_rows = ""
         running_usd = opening_balance_usd
         for r in period_records:
@@ -314,7 +383,6 @@ class AccountsWidget(QWidget):
             running_str = currency.format_amount(running_display, display_currency)
             row_class = "income-row" if r['type'] == 'incoming' else "expense-row"
             
-            # عمود سعر الصرف التاريخي (إذا كان مطلوباً)
             historical_rate_col = ""
             if show_historical_rate:
                 exchange_rate = r.get('exchange_rate_to_usd', 1.0)
@@ -330,11 +398,9 @@ class AccountsWidget(QWidget):
                 {historical_rate_col}
             </tr>
 """
-        # حساب الرصيد الختامي (للتقرير التراكمي)
         closing_balance_usd = running_usd
         closing_balance_display = currency.convert(closing_balance_usd, 'USD', display_currency)
         
-        # إضافة صف الرصيد الافتتاحي إذا كان تراكمياً
         opening_row = ""
         if is_cumulative and opening_balance_usd != 0:
             opening_row = f"""
@@ -345,9 +411,8 @@ class AccountsWidget(QWidget):
                 <td class="center">—</td>
                 <td class="center">{currency.format_amount(opening_balance_display, display_currency)}</td>
                 {('<td class="center">—</td>' if show_historical_rate else '')}
-            </tr>
+             </tr>
 """
-        # إضافة صف الرصيد الختامي إذا كان تراكمياً
         closing_row = ""
         if is_cumulative:
             closing_row = f"""
@@ -358,9 +423,8 @@ class AccountsWidget(QWidget):
                 <td class="center">—</td>
                 <td class="center">{currency.format_amount(closing_balance_display, display_currency)}</td>
                 {('<td class="center">—</td>' if show_historical_rate else '')}
-            </tr>
+             </tr>
 """
-        # بناء رأس الجدول حسب الخيارات
         headers = "<th>التاريخ</th><th>ملاحظات</th><th>لنا</th><th>له</th><th>التراكمي</th>"
         if show_historical_rate:
             headers += "<th>سعر الصرف (USD)</th>"
@@ -369,7 +433,7 @@ class AccountsWidget(QWidget):
 <html dir="rtl" lang="ar">
 <head><meta charset="UTF-8"><title>تقرير شركة {company}</title>
 <style>
-    body {{ font-family: 'Tahoma', 'Arial', sans-serif; margin: 1.5cm; direction: rtl; background: white; }}
+    body {{ font-family: 'Tajawal', 'Segoe UI', Tahoma, Arial; margin: 1.5cm; direction: rtl; background: white; }}
     h1 {{ color: #2c3e50; text-align: center; border-bottom: 2px solid #3498db; }}
     .period-info {{ text-align: center; margin-bottom: 20px; }}
     .summary {{ text-align: center; margin: 20px 0; font-size: 16px; font-weight: bold; background: #e9ecef; padding: 10px; border-radius: 8px; }}
