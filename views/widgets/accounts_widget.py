@@ -307,7 +307,7 @@ class AccountsWidget(QWidget):
             # يمكن إضافة الشعار لاحقاً
             pass
 
-        # بناء الجدول
+        # بناء الجدول - ✅ تصحيح: <table> بدلاً من 一位
         table_rows = ""
         for idx, row in enumerate(data_rows, start=1):
             net_val = row[4]
@@ -324,14 +324,15 @@ class AccountsWidget(QWidget):
             # عمود الترقيم
             num_col = f'<td class="center">{idx}</td>' if show_row_numbers else ''
 
+            # ✅ تصحيح: إغلاق الصف بـ </table> بدلاً من </table>
             table_rows += f"""
             <tr class="{row_class}">
                 {num_col}
-                <td class="right">{self.clean_text(row[0])}</td>
+                <td class="center">{self.clean_text(row[0])}</td>
                 <td class="center {incoming_class}">{self.clean_text(format_full(row[1]))}</td>
                 <td class="center {outgoing_class}">{self.clean_text(format_full(row[2]))}</td>
                 <td class="center {net_class}">{self.clean_text(format_full(row[3]))}</td>
-            </table>"""
+            </tr>"""
 
         # بناء التذييل
         footer_text = ""
@@ -349,7 +350,8 @@ class AccountsWidget(QWidget):
             headers.append('#')
         headers.extend([translate('company_name'), translate('total_incoming'), translate('total_outgoing'), translate('net')])
 
-        # بناء HTML النهائي
+        # ✅ تصحيح: إغلاق صف الإجمالي الكلي بـ </tr> بدلاً من </tr>
+        # ✅ تصحيح: توسيط عمود اسم الشركة (class="center" بدلاً من class="right")
         html = f"""<!DOCTYPE html>
 <html dir="rtl" lang="ar">
 <head>
@@ -425,6 +427,10 @@ class AccountsWidget(QWidget):
         }}
         .center {{ text-align: center; }}
         .right {{ text-align: right; }}
+        /* ✅ توسيط إجباري لجميع خلايا الجدول */
+        table td {{
+            text-align: center !important;
+        }}
     </style>
 </head>
 <body>
@@ -442,7 +448,7 @@ class AccountsWidget(QWidget):
             {table_rows}
             <tr class="total-row">
                 {('<td class="center">—</td>' if show_row_numbers else '')}
-                <td class="right"><strong>الإجمالي الكلي</strong></td>
+                <td class="center"><strong>الإجمالي الكلي</strong></td>
                 <td class="center income"><strong>{format_full(total_in_all)}</strong></td>
                 <td class="center expense"><strong>{format_full(total_out_all)}</strong></td>
                 <td class="center"><strong>{format_full(total_net)}</strong></td>
@@ -602,45 +608,51 @@ class AccountsWidget(QWidget):
             running_str = format_full(running_display)
             row_class = "income-row" if r['type'] == 'incoming' else "expense-row"
             
+            # ✅ تصحيح: استخدام </td> بدلاً من الحرف الصيني "一位"
             historical_rate_col = ""
             if show_historical_rate:
                 exchange_rate = r.get('exchange_rate_to_usd', 1.0)
-                historical_rate_col = f'<td class="center">{exchange_rate:.4f}一位'
+                historical_rate_col = f'<td class="center">{exchange_rate:.4f}</td>'
             
+            # ✅ تصحيح: إغلاق كل خلية بـ </tr> وإغلاق الصف بـ </tr>
             table_rows += f"""
             <tr class="{row_class}">
                 <td class="center">{date_display}</td>
                 <td class="right">{notes}</td>
-                <td class="center">{incoming_str}一位
-                <td class="center">{outgoing_str}一位
-                <td class="center">{running_str}一位
+                <td class="center">{incoming_str}</td>
+                <td class="center">{outgoing_str}</td>
+                <td class="center">{running_str}</td>
                 {historical_rate_col}
-             </tr>"""
+            </tr>"""
+        
         closing_balance_usd = running_usd
         closing_balance_display = currency.convert(closing_balance_usd, 'USD', display_currency)
         
+        # ✅ تصحيح: إغلاق الخلايا بـ <table> بدلاً من "一位"
         opening_row = ""
         if is_cumulative and opening_balance_usd != 0:
             opening_row = f"""
             <tr class="opening-row">
-                <td class="center">قبل {start_date}一位
-                <td class="right">الرصيد الافتتاحي一位
-                <td class="center">—一位
-                <td class="center">—一位
-                <td class="center">{format_full(opening_balance_display)}一位
-                {('<td class="center">—一位' if show_historical_rate else '')}
-             </tr>"""
+                <td class="center">قبل {start_date}</td>
+                <td class="right">الرصيد الافتتاحي</td>
+                <td class="center">—</td>
+                <td class="center">—</td>
+                <td class="center">{format_full(opening_balance_display)}</td>
+                {('<td class="center">—</td>' if show_historical_rate else '')}
+            </tr>"""
+        
         closing_row = ""
         if is_cumulative:
             closing_row = f"""
             <tr class="closing-row">
-                <td class="center">بعد {end_date}一位
-                <td class="right">الرصيد الختامي一位
-                <td class="center">—一位
-                <td class="center">—一位
-                <td class="center">{format_full(closing_balance_display)}一位
-                {('<td class="center">—一位' if show_historical_rate else '')}
-             </tr>"""
+                <td class="center">بعد {end_date}</td>
+                <td class="right">الرصيد الختامي</td>
+                <td class="center">—</td>
+                <td class="center">—</td>
+                <td class="center">{format_full(closing_balance_display)}</td>
+                {('<td class="center">—</td>' if show_historical_rate else '')}
+            </tr>"""
+        
         headers = "<th>التاريخ</th><th>ملاحظات</th><th>لنا</th><th>له</th><th>التراكمي</th>"
         if show_historical_rate:
             headers += "<th>سعر الصرف (USD)</th>"
@@ -662,6 +674,8 @@ class AccountsWidget(QWidget):
     .footer {{ text-align: center; margin-top: 30px; font-size: 12px; color: gray; }}
     .center {{ text-align: center; }}
     .right {{ text-align: right; }}
+    /* ✅ توسيط إجباري لجميع خلايا الجدول */
+    table td {{ text-align: center !important; }}
 </style>
 </head>
 <body>
@@ -673,7 +687,7 @@ class AccountsWidget(QWidget):
         💰 صافي: {format_full(net_display)}
     </div>
     <table class="data-table">
-        <thead><tr>{headers}</thead>
+        <thead><tr>{headers} through</thead>
         <tbody>
             {opening_row}
             {table_rows}
