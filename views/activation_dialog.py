@@ -32,6 +32,7 @@ class ActivationDialog(FramelessDialog):
 
         self.key_edit = QLineEdit()
         self.key_edit.setPlaceholderText("XXXX-XXXX-XXXX-XXXX")
+        self.key_edit.setEchoMode(QLineEdit.Password)  # إخفاء محتوى المفتاح
         self.key_edit.setStyleSheet(f"padding: 12px; border-radius: 8px; border: 1px solid {ThemeManager.get('border')}; font-size: 14px; background-color: {ThemeManager.get('bg_window')}; color: {ThemeManager.get('text_primary')};")
         layout.addWidget(self.key_edit)
 

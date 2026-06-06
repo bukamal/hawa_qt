@@ -2,7 +2,7 @@
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QSpinBox, QComboBox,
     QPushButton, QMessageBox, QGroupBox, QTableWidget, QTableWidgetItem,
-    QHeaderView, QCheckBox, QLineEdit, QFileDialog, QTabWidget, QLabel
+    QHeaderView, QCheckBox, QLineEdit, QFileDialog, QTabWidget, QLabel, QDialog, QDialogButtonBox
 )
 from PyQt5.QtCore import Qt, pyqtSignal, QSettings, QTimer
 from database import SettingsRepository
@@ -11,6 +11,7 @@ from i18n.translator import translate, set_language
 from theme_manager import ThemeManager
 from auth.session import UserSession
 from config import get_company_info, save_company_info
+from auth.activation import check_network_activation, activate_network
 import os
 import shutil
 import datetime
@@ -219,16 +220,20 @@ class SettingsWidget(QWidget):
         form.addRow("عنوان الخادم البعيد:", self.server_url_edit)
 
         # التحقق من تفعيل الشبكة
-        from auth.activation import check_network_activation
         network_ok, network_msg = check_network_activation()
         if not network_ok:
             self.mode_combo.setItemText(1, "عميل (غير متاح - قم بالتفعيل)")
             self.mode_combo.setItemText(2, "خادم (غير متاح - قم بالتفعيل)")
             self.mode_combo.setCurrentIndex(0)
             self.mode_combo.setEnabled(False)
-            warning_label = QLabel(f"⚠️ {network_msg}. يرجى تفعيل ميزة الشبكة من تبويب الترخيص.")
+            warning_label = QLabel(f"⚠️ {network_msg}. يرجى تفعيل ميزة الشبكة.")
             warning_label.setStyleSheet("color: orange; font-weight: bold; margin: 5px;")
             form.addRow(warning_label)
+
+            # زر تفعيل الشبكة (سيتم فتح حوار مخصص)
+            activate_btn = QPushButton("🔓 تفعيل الشبكة")
+            activate_btn.clicked.connect(self._activate_network_dialog)
+            form.addRow(activate_btn)
 
         self.connection_test_label = QLabel("")
         self.connection_test_label.setStyleSheet("font-size: 10px;")
@@ -271,6 +276,51 @@ class SettingsWidget(QWidget):
         self.status_timer.timeout.connect(self.update_server_status)
         self.status_timer.start(3000)
         return tab
+
+    def _activate_network_dialog(self):
+        """حوار مخصص لتفعيل الشبكة مع إخفاء المفتاح"""
+        dialog = QDialog(self)
+        dialog.setWindowTitle("تفعيل الشبكة")
+        dialog.setLayoutDirection(Qt.RightToLeft)
+        dialog.resize(400, 200)
+        layout = QVBoxLayout(dialog)
+        
+        desc = QLabel("أدخل مفتاح تفعيل ميزة الشبكة")
+        desc.setAlignment(Qt.AlignCenter)
+        layout.addWidget(desc)
+        
+        key_edit = QLineEdit()
+        key_edit.setPlaceholderText("XXXX-XXXX-XXXX-XXXX")
+        key_edit.setEchoMode(QLineEdit.Password)  # إخفاء المفتاح
+        layout.addWidget(key_edit)
+        
+        status_label = QLabel()
+        status_label.setStyleSheet("color: red; font-size: 12px;")
+        status_label.setAlignment(Qt.AlignCenter)
+        layout.addWidget(status_label)
+        
+        button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        button_box.accepted.connect(lambda: self._perform_network_activation(key_edit.text().strip(), status_label, dialog))
+        button_box.rejected.connect(dialog.reject)
+        layout.addWidget(button_box)
+        
+        dialog.exec()
+
+    def _perform_network_activation(self, key, status_label, dialog):
+        if not key:
+            status_label.setText("يرجى إدخال مفتاح التفعيل")
+            return
+        success, msg = activate_network(key)
+        if success:
+            QMessageBox.information(self, "نجاح", "تم تفعيل الشبكة بنجاح. يرجى إعادة تشغيل التطبيق.")
+            # تحديث تبويب الشبكة
+            index = self.tabs.currentIndex()
+            self.tabs.removeTab(index)
+            self.tabs.insertTab(index, self.create_network_tab(), "🌐 الشبكة")
+            self.tabs.setCurrentIndex(index)
+            dialog.accept()
+        else:
+            status_label.setText(f"فشل التفعيل: {msg}")
 
     def on_mode_changed(self):
         is_client = self.mode_combo.currentIndex() == 1
