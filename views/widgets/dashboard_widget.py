@@ -1,4 +1,4 @@
-from PyQt5.QtWidgets import QWidget, QVBoxLayout, QGridLayout, QLabel, QFrame, QComboBox, QHBoxLayout, QHeaderView
+from PyQt5.QtWidgets import QWidget, QVBoxLayout, QGridLayout, QLabel, QFrame, QComboBox, QHBoxLayout, QHeaderView, QSizePolicy
 from PyQt5.QtCore import Qt, QDate, pyqtSignal
 from database import ExpenseRepository, UserRepository
 from currency import currency
@@ -32,6 +32,13 @@ class DashboardWidget(QWidget):
         # بطاقات الإحصائيات (الصف الأول)
         self.card_layout = QGridLayout()
         self.card_layout.setSpacing(15)
+        # تعيين تمدد الأعمدة لتوزيع المساحة بالتساوي
+        for i in range(3):
+            self.card_layout.setColumnStretch(i, 1)
+        # تعيين تمدد الصفوف
+        self.card_layout.setRowStretch(0, 1)
+        self.card_layout.setRowStretch(1, 1)
+        self.card_layout.setRowStretch(2, 1)
         
         self.incoming_card = self._create_card(translate('total_incoming'), "0")
         self.outgoing_card = self._create_card(translate('total_outgoing'), "0")
@@ -40,7 +47,7 @@ class DashboardWidget(QWidget):
         self.users_card = self._create_card("عدد المستخدمين", "0")
         self.avg_card = self._create_card("متوسط قيمة القيد", "0")
         self.top_company_card = self._create_card("أعلى شركة صافي", "0")
-        self.exchange_rate_card = self._create_card("سعر الصرف (1 USD)", "0")  # عملة تاريخية
+        self.exchange_rate_card = self._create_card("سعر الصرف (1 USD)", "0")
         
         self.card_layout.addWidget(self.incoming_card, 0, 0)
         self.card_layout.addWidget(self.outgoing_card, 0, 1)
@@ -53,13 +60,13 @@ class DashboardWidget(QWidget):
         
         layout.addLayout(self.card_layout)
         
-        # الرسم البياني باستخدام pyqtgraph
+        # الرسم البياني
         self.plot_widget = pg.PlotWidget()
         self.plot_widget.setBackground('w')
         self.plot_widget.setLabel('left', f'المبلغ ({currency.get_display_currency()})')
         self.plot_widget.setLabel('bottom', 'الشهر')
         self.plot_widget.setTitle('اتجاه الإيرادات والمصروفات (آخر 6 أشهر)')
-        self.plot_widget.getAxis('bottom').setTicks([])  # سيتم تعيينها لاحقاً
+        self.plot_widget.getAxis('bottom').setTicks([])
         layout.addWidget(self.plot_widget)
         
         # جدول آخر 5 قيود
@@ -75,16 +82,28 @@ class DashboardWidget(QWidget):
         frame = QFrame()
         frame.setFrameShape(QFrame.StyledPanel)
         frame.setStyleSheet("background-color: palette(base); border-radius: 16px; padding: 16px;")
+        # سياسة الحجم لتمدد أفقياً
+        frame.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.MinimumExpanding)
+        frame.setMinimumHeight(100)
+        frame.setMinimumWidth(180)
+        
         vbox = QVBoxLayout(frame)
         vbox.setAlignment(Qt.AlignRight)
+        vbox.setContentsMargins(10, 10, 10, 10)
+        
         title_lbl = QLabel(title)
         title_lbl.setStyleSheet("font-weight: bold; font-size: 14px; color: palette(mid);")
         title_lbl.setAlignment(Qt.AlignRight)
+        title_lbl.setWordWrap(True)
+        vbox.addWidget(title_lbl)
+        
         value_lbl = QLabel(value)
         value_lbl.setStyleSheet("font-size: 28px; font-weight: bold;")
         value_lbl.setAlignment(Qt.AlignRight)
-        vbox.addWidget(title_lbl)
+        value_lbl.setWordWrap(True)
+        value_lbl.setMinimumWidth(120)
         vbox.addWidget(value_lbl)
+        
         return frame
     
     def get_date_filter(self):
@@ -122,7 +141,6 @@ class DashboardWidget(QWidget):
                 continue
             filtered.append(e)
         
-        # إحصائيات الفترة
         total_in_usd = sum(e['amount'] for e in filtered if e['type'] == 'incoming')
         total_out_usd = sum(e['amount'] for e in filtered if e['type'] == 'outgoing')
         net_usd = total_in_usd - total_out_usd
@@ -153,11 +171,9 @@ class DashboardWidget(QWidget):
         else:
             top_text = "—"
         
-        # سعر الصرف التاريخي (الحالي) مقابل العملة المعروضة
-        base_currency = currency.get_base_currency()  # USD غالباً
+        base_currency = currency.get_base_currency()
         rate = currency.get_rate_to_usd(display_currency)
         rate_text = f"1 {display_currency} = {rate:.4f} USD" if display_currency != 'USD' else f"1 USD = 1.00 USD"
-        self._set_card_value(self.exchange_rate_card, rate_text)
         
         self._set_card_value(self.incoming_card, currency.format_amount(total_in, display_currency))
         self._set_card_value(self.outgoing_card, currency.format_amount(total_out, display_currency))
@@ -168,11 +184,16 @@ class DashboardWidget(QWidget):
         self._set_card_value(self.users_card, str(users_count))
         self._set_card_value(self.avg_card, currency.format_amount(avg, display_currency))
         self._set_card_value(self.top_company_card, top_text)
+        self._set_card_value(self.exchange_rate_card, rate_text)
         
-        # رسم بياني (آخر 6 أشهر من كل القيود، بدون فلتر الفترة)
+        # إعادة تخطيط البطاقات بعد تغيير القيم
+        for card in [self.incoming_card, self.outgoing_card, self.net_card,
+                     self.companies_card, self.users_card, self.avg_card,
+                     self.top_company_card, self.exchange_rate_card]:
+            card.updateGeometry()
+        
         self.plot_monthly_trend(all_expenses)
         
-        # جدول آخر 5 قيود
         recent = sorted(all_expenses, key=lambda x: x['id'], reverse=True)[:5]
         recent_data = []
         for r in recent:
@@ -195,7 +216,6 @@ class DashboardWidget(QWidget):
         self.recent_table.refresh_style()
     
     def plot_monthly_trend(self, all_expenses):
-        """رسم بياني باستخدام pyqtgraph"""
         monthly_in = {}
         monthly_out = {}
         for e in all_expenses:
@@ -231,7 +251,6 @@ class DashboardWidget(QWidget):
         
         self.plot_widget.clear()
         x = list(range(len(months)))
-        # عرض أعمدة جانبية
         bg_in = pg.BarGraphItem(x=x, height=in_display, width=0.4, brush='#28a745', name=translate('total_incoming'))
         bg_out = pg.BarGraphItem(x=[i+0.4 for i in x], height=out_display, width=0.4, brush='#dc3545', name=translate('total_outgoing'))
         self.plot_widget.addItem(bg_in)
