@@ -1,4 +1,4 @@
-from PyQt5.QtWidgets import QWidget, QVBoxLayout, QGridLayout, QLabel, QFrame, QComboBox, QHBoxLayout, QHeaderView, QSizePolicy
+from PyQt5.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame, QComboBox, QHeaderView, QSizePolicy
 from PyQt5.QtCore import Qt, QDate, pyqtSignal
 from database import ExpenseRepository, UserRepository
 from currency import currency
@@ -15,9 +15,9 @@ class DashboardWidget(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setLayoutDirection(Qt.RightToLeft)
-        layout = QVBoxLayout(self)
-        layout.setSpacing(20)
-        layout.setContentsMargins(20, 20, 20, 20)
+        main_layout = QVBoxLayout(self)
+        main_layout.setSpacing(20)
+        main_layout.setContentsMargins(20, 20, 20, 20)
         
         # شريط الفلترة
         filter_layout = QHBoxLayout()
@@ -27,38 +27,45 @@ class DashboardWidget(QWidget):
         self.period_combo.currentIndexChanged.connect(self.refresh)
         filter_layout.addWidget(self.period_combo)
         filter_layout.addStretch()
-        layout.addLayout(filter_layout)
+        main_layout.addLayout(filter_layout)
         
-        # بطاقات الإحصائيات (الصف الأول)
-        self.card_layout = QGridLayout()
-        self.card_layout.setSpacing(15)
-        # تعيين تمدد الأعمدة لتوزيع المساحة بالتساوي
-        for i in range(3):
-            self.card_layout.setColumnStretch(i, 1)
-        # تعيين تمدد الصفوف
-        self.card_layout.setRowStretch(0, 1)
-        self.card_layout.setRowStretch(1, 1)
-        self.card_layout.setRowStretch(2, 1)
+        # ========== بطاقات الإحصائيات (بتخطيطات متداخلة) ==========
+        cards_container = QVBoxLayout()
+        cards_container.setSpacing(15)
         
+        # الصف الأول: 3 بطاقات (وارد، صادر، صافي)
+        row1 = QHBoxLayout()
+        row1.setSpacing(15)
         self.incoming_card = self._create_card(translate('total_incoming'), "0")
         self.outgoing_card = self._create_card(translate('total_outgoing'), "0")
         self.net_card = self._create_card(translate('net_profit'), "0")
+        row1.addWidget(self.incoming_card)
+        row1.addWidget(self.outgoing_card)
+        row1.addWidget(self.net_card)
+        cards_container.addLayout(row1)
+        
+        # الصف الثاني: 3 بطاقات (عدد الشركات، عدد المستخدمين، متوسط القيد)
+        row2 = QHBoxLayout()
+        row2.setSpacing(15)
         self.companies_card = self._create_card("عدد الشركات", "0")
         self.users_card = self._create_card("عدد المستخدمين", "0")
         self.avg_card = self._create_card("متوسط قيمة القيد", "0")
+        row2.addWidget(self.companies_card)
+        row2.addWidget(self.users_card)
+        row2.addWidget(self.avg_card)
+        cards_container.addLayout(row2)
+        
+        # الصف الثالث: بطاقتان (أعلى شركة صافي، سعر الصرف) - توزيع متساوٍ
+        row3 = QHBoxLayout()
+        row3.setSpacing(15)
         self.top_company_card = self._create_card("أعلى شركة صافي", "0")
         self.exchange_rate_card = self._create_card("سعر الصرف (1 USD)", "0")
+        # لجعل البطاقتين تأخذان عرضاً متساوياً، نضيف stretch أو نضبط السياسات
+        row3.addWidget(self.top_company_card)
+        row3.addWidget(self.exchange_rate_card)
+        cards_container.addLayout(row3)
         
-        self.card_layout.addWidget(self.incoming_card, 0, 0)
-        self.card_layout.addWidget(self.outgoing_card, 0, 1)
-        self.card_layout.addWidget(self.net_card, 0, 2)
-        self.card_layout.addWidget(self.companies_card, 1, 0)
-        self.card_layout.addWidget(self.users_card, 1, 1)
-        self.card_layout.addWidget(self.avg_card, 1, 2)
-        self.card_layout.addWidget(self.top_company_card, 2, 0, 1, 2)
-        self.card_layout.addWidget(self.exchange_rate_card, 2, 2)
-        
-        layout.addLayout(self.card_layout)
+        main_layout.addLayout(cards_container)
         
         # الرسم البياني
         self.plot_widget = pg.PlotWidget()
@@ -67,42 +74,45 @@ class DashboardWidget(QWidget):
         self.plot_widget.setLabel('bottom', 'الشهر')
         self.plot_widget.setTitle('اتجاه الإيرادات والمصروفات (آخر 6 أشهر)')
         self.plot_widget.getAxis('bottom').setTicks([])
-        layout.addWidget(self.plot_widget)
+        main_layout.addWidget(self.plot_widget)
         
         # جدول آخر 5 قيود
         self.recent_table = CustomTableView()
         self.recent_table.setMinimumHeight(200)
-        layout.addWidget(QLabel("آخر 5 قيود مضافة:"))
-        layout.addWidget(self.recent_table)
+        main_layout.addWidget(QLabel("آخر 5 قيود مضافة:"))
+        main_layout.addWidget(self.recent_table)
         
         self.refresh_needed.connect(self.refresh)
         self.refresh()
     
     def _create_card(self, title, value):
+        """إنشاء بطاقة إحصائية بتنسيق متجانس مع سياسات حجم مناسبة"""
         frame = QFrame()
         frame.setFrameShape(QFrame.StyledPanel)
-        frame.setStyleSheet("background-color: palette(base); border-radius: 16px; padding: 16px;")
-        # سياسة الحجم لتمدد أفقياً
-        frame.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.MinimumExpanding)
-        frame.setMinimumHeight(100)
-        frame.setMinimumWidth(180)
+        frame.setStyleSheet("""
+            background-color: palette(base);
+            border-radius: 16px;
+            padding: 16px;
+        """)
+        # سياسة الحزام: تتمدد أفقياً ولكن ارتفاعها يتناسب مع المحتوى
+        frame.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
+        frame.setMinimumHeight(110)
         
-        vbox = QVBoxLayout(frame)
-        vbox.setAlignment(Qt.AlignRight)
-        vbox.setContentsMargins(10, 10, 10, 10)
+        layout = QVBoxLayout(frame)
+        layout.setAlignment(Qt.AlignRight)
+        layout.setContentsMargins(12, 12, 12, 12)
         
         title_lbl = QLabel(title)
         title_lbl.setStyleSheet("font-weight: bold; font-size: 14px; color: palette(mid);")
         title_lbl.setAlignment(Qt.AlignRight)
         title_lbl.setWordWrap(True)
-        vbox.addWidget(title_lbl)
+        layout.addWidget(title_lbl)
         
         value_lbl = QLabel(value)
         value_lbl.setStyleSheet("font-size: 28px; font-weight: bold;")
         value_lbl.setAlignment(Qt.AlignRight)
         value_lbl.setWordWrap(True)
-        value_lbl.setMinimumWidth(120)
-        vbox.addWidget(value_lbl)
+        layout.addWidget(value_lbl)
         
         return frame
     
@@ -186,7 +196,7 @@ class DashboardWidget(QWidget):
         self._set_card_value(self.top_company_card, top_text)
         self._set_card_value(self.exchange_rate_card, rate_text)
         
-        # إعادة تخطيط البطاقات بعد تغيير القيم
+        # إعادة تخطيط البطاقات (للتأكد من ضبط الأحجام)
         for card in [self.incoming_card, self.outgoing_card, self.net_card,
                      self.companies_card, self.users_card, self.avg_card,
                      self.top_company_card, self.exchange_rate_card]:
