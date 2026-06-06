@@ -28,7 +28,7 @@ jobs:
         $path = python -c "import PyQt5, os; print(os.path.join(os.path.dirname(PyQt5.__file__), 'Qt5', 'plugins', 'platforms'))"
         echo "platforms_path=$path" >> $env:GITHUB_OUTPUT
 
-    - name: Build with PyInstaller (OneDir, windowed mode)
+    - name: Build with PyInstaller (OneDir, no console)
       run: |
         pyinstaller --collect-all PyQt5 --collect-all PyQtWebEngine `
           --collect-all flask --collect-all flask_jwt_extended --collect-all flask_limiter `
@@ -43,37 +43,14 @@ jobs:
           --add-data "${{ steps.qtpath.outputs.platforms_path }};platforms" `
           --onedir --windowed --name HawaaSham main.py
 
-    - name: Download Inno Setup (GitHub Immutable Release)
+    - name: Download Inno Setup
       run: |
-        $url = "https://github.com/jrsoftware/issrc/releases/download/is-6_7_3/innosetup-6.7.3.exe"
-        $output = "innosetup.exe"
-        Write-Host "Downloading Inno Setup 6.7.3 from official GitHub release..."
-        Invoke-WebRequest -Uri $url -OutFile $output -UseBasicParsing
-        
-        if (-not (Test-Path $output)) {
-          Write-Error "Download failed: file not found"
-          exit 1
-        }
-        
-        $size = (Get-Item $output).Length
-        Write-Host "Downloaded $size bytes"
-        
-        # Verify it's a valid executable (MZ header)
-        $bytes = [System.IO.File]::ReadAllBytes($output)[0..1]
-        if ($bytes[0] -ne 0x4D -or $bytes[1] -ne 0x5A) {
-          Write-Error "Downloaded file is not a valid executable (MZ header missing)"
-          exit 1
-        }
-        
-        Write-Host "Installing Inno Setup 6.7.3 silently..."
-        .\$output /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
+        curl -L -o is.exe https://jrsoftware.org/download.php/is.exe
+        ./is.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
 
     - name: Download Arabic Language File
       run: |
-        $langUrl = "https://raw.githubusercontent.com/jrsoftware/issrc/main/Files/Languages/Arabic.isl"
-        $langPath = "C:\Program Files (x86)\Inno Setup 6\Languages\Arabic.isl"
-        New-Item -ItemType Directory -Force -Path (Split-Path $langPath -Parent) | Out-Null
-        Invoke-WebRequest -Uri $langUrl -OutFile $langPath -UseBasicParsing
+        curl -L -o "C:\Program Files (x86)\Inno Setup 6\Languages\Arabic.isl" https://raw.githubusercontent.com/jrsoftware/issrc/main/Files/Languages/Arabic.isl
 
     - name: Create Installer Script
       run: |
