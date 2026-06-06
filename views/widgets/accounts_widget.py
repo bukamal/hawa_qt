@@ -112,7 +112,7 @@ class AccountsWidget(QWidget):
             self.table.refresh_style()
 
     def print_report(self):
-        """طباعة تقرير عام لجميع الشركات (بدون اختصار الأعداد)"""
+        """طباعة تقرير عام لجميع الشركات (بجودة عالية وخالية من الأخطاء)"""
         repo = ExpenseRepository()
         try:
             expenses = repo.get_all(convert_to_display=False)
@@ -120,7 +120,6 @@ class AccountsWidget(QWidget):
             QMessageBox.critical(self, "خطأ", f"فشل تحميل البيانات: {str(e)}")
             return
         
-        # تجميع البيانات بنفس طريقة refresh_table ولكن بدون تنسيق
         groups = defaultdict(lambda: {'incoming': 0.0, 'outgoing': 0.0})
         for e in expenses:
             groups[e['company_name']][e['type']] += e['amount']
@@ -132,7 +131,7 @@ class AccountsWidget(QWidget):
         def format_full(amount):
             return f"{amount:,.{decimals}f} {symbol}"
         
-        data = []
+        data_rows = []
         total_in_all = 0.0
         total_out_all = 0.0
         for company, vals in groups.items():
@@ -141,13 +140,13 @@ class AccountsWidget(QWidget):
             net = incoming - outgoing
             total_in_all += incoming
             total_out_all += outgoing
-            data.append([
+            data_rows.append([
                 company,
                 format_full(incoming),
                 format_full(outgoing),
                 format_full(net)
             ])
-        data.sort(key=lambda x: x[0])
+        data_rows.sort(key=lambda x: x[0])
         
         headers = [translate('company_name'), translate('total_incoming'), translate('total_outgoing'), translate('net')]
         now = datetime.now()
@@ -155,47 +154,89 @@ class AccountsWidget(QWidget):
         
         html = f"""<!DOCTYPE html>
 <html dir="rtl" lang="ar">
-<head><meta charset="UTF-8"><title>تقرير حسابات الشركات</title>
-<style>
-    body {{ font-family: 'Tajawal', 'Segoe UI', Tahoma, Arial; margin: 2cm; direction: rtl; background: white; }}
-    h1 {{ text-align: center; color: #2c3e50; border-bottom: 2px solid #3498db; padding-bottom: 8px; }}
-    .report-date {{ text-align: center; color: #6c757d; font-size: 12px; margin-bottom: 20px; }}
-    table {{ width: 100%; border-collapse: collapse; margin-top: 20px; }}
-    th, td {{ border: 1px solid #ddd; padding: 8px; text-align: center; }}
-    th {{ background-color: #2c3e50; color: white; font-weight: bold; }}
-    tr:nth-child(even) {{ background-color: #f2f2f2; }}
-    .footer {{ text-align: center; margin-top: 30px; font-size: 11px; color: #6c757d; border-top: 1px solid #dee2e6; padding-top: 10px; }}
-    .total-row {{ background-color: #e9ecef; font-weight: bold; }}
-</style>
+<head>
+    <meta charset="UTF-8">
+    <title>تقرير حسابات الشركات</title>
+    <style>
+        body {{
+            font-family: 'Tajawal', 'Segoe UI', Tahoma, Arial;
+            margin: 2cm;
+            direction: rtl;
+            background: white;
+        }}
+        h1 {{
+            text-align: center;
+            color: #2c3e50;
+            border-bottom: 2px solid #3498db;
+            padding-bottom: 8px;
+        }}
+        .report-date {{
+            text-align: center;
+            color: #6c757d;
+            font-size: 12px;
+            margin-bottom: 20px;
+        }}
+        table {{
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+        }}
+        th, td {{
+            border: 1px solid #ddd;
+            padding: 8px;
+            text-align: center;
+        }}
+        th {{
+            background-color: #2c3e50;
+            color: white;
+            font-weight: bold;
+        }}
+        tr:nth-child(even) {{
+            background-color: #f2f2f2;
+        }}
+        .total-row {{
+            background-color: #e9ecef;
+            font-weight: bold;
+        }}
+        .footer {{
+            text-align: center;
+            margin-top: 30px;
+            font-size: 11px;
+            color: #6c757d;
+            border-top: 1px solid #dee2e6;
+            padding-top: 10px;
+        }}
+    </style>
 </head>
 <body>
     <h1>تقرير حسابات الشركات</h1>
     <div class="report-date">تاريخ الطباعة: {date_str}</div>
-    <table>
+    </table>
         <thead>
             <tr>
-"""
-        for h in headers:
-            html += f"<th>{h}</th>"
-        html += """
-             </tr>
+                <th>{headers[0]}</th>
+                <th>{headers[1]}</th>
+                <th>{headers[2]}</th>
+                <th>{headers[3]}</th>
+            </tr>
         </thead>
         <tbody>
 """
-        for row in data:
+        for row in data_rows:
             html += "<tr>"
-            for cell in row:
-                html += f"一位{cell}一位"
+            html += f"一位{row[0]}一位"
+            html += f"一位{row[1]}一位"
+            html += f"一位{row[2]}一位"
+            html += f"一位{row[3]}一位"
             html += "</tr>"
-        # صف الإجمالي الكلي
-        total_net_all = total_in_all - total_out_all
+        total_net = total_in_all - total_out_all
         html += f"""
             <tr class="total-row">
                 <td><strong>الإجمالي الكلي</strong></td>
                 <td><strong>{format_full(total_in_all)}</strong></td>
                 <td><strong>{format_full(total_out_all)}</strong></td>
-                <td><strong>{format_full(total_net_all)}</strong></td>
-            </table>
+                <td><strong>{format_full(total_net)}</strong></td>
+            </tr>
         </tbody>
     </table>
     <div class="footer">نظام هوى الشام للسياحة والسفر - جميع الحقوق محفوظة</div>
@@ -207,10 +248,6 @@ class AccountsWidget(QWidget):
             f.write(html)
         webbrowser.open(f'file://{temp}')
         QMessageBox.information(self, translate('print_report'), translate('report_opened_in_browser'))
-
-    def generate_html_general_report(self, title, headers, data):
-        # هذه الدالة لم تعد مستخدمة، لكن نتركها للتوافق
-        pass
 
     def show_custom_report_dialog(self):
         dialog = QDialog(self)
@@ -433,7 +470,7 @@ class AccountsWidget(QWidget):
         💰 صافي: {format_full(net_display)}
     </div>
     <table>
-        <thead><tr>{headers}</thead>
+        <thead><tr>{headers}</tr></thead>
         <tbody>
             {opening_row}
             {table_rows}
