@@ -18,7 +18,6 @@ app.config['JWT_BLACKLIST_TOKEN_CHECKS'] = ['access']
 
 jwt = JWTManager(app)
 
-# رفع الحدود الافتراضية لتقليل احتمالية 429
 limiter = Limiter(
     get_remote_address,
     app=app,
@@ -26,7 +25,6 @@ limiter = Limiter(
     storage_uri="memory://",
 )
 
-# ------------------- مسار قاعدة البيانات الموحّد -------------------
 def get_local_db_path():
     if os.name == 'nt':
         appdata = os.environ.get('APPDATA', os.path.expanduser('~\\AppData\\Roaming'))
@@ -38,7 +36,6 @@ def get_local_db_path():
 
 DB_PATH = get_local_db_path()
 
-# ------------------- تهيئة قاعدة البيانات -------------------
 def init_db():
     from database.migrations import ensure_db
     ensure_db()
@@ -54,7 +51,6 @@ def init_db():
 
 init_db()
 
-# ------------------- دوال مساعدة -------------------
 def get_db():
     if 'db' not in g:
         g.db = sqlite3.connect(DB_PATH)
@@ -72,7 +68,6 @@ def verify_password(stored_hash, salt, password):
     from auth.password import verify_password as verify
     return verify(password, stored_hash, salt)
 
-# ------------------- التحقق من القائمة السوداء -------------------
 @jwt.token_in_blocklist_loader
 def check_if_token_revoked(jwt_header, jwt_payload):
     jti = jwt_payload['jti']
@@ -80,7 +75,6 @@ def check_if_token_revoked(jwt_header, jwt_payload):
     row = conn.execute('SELECT 1 FROM token_blacklist WHERE jti = ?', (jti,)).fetchone()
     return row is not None
 
-# ------------------- RBAC -------------------
 def admin_required(fn):
     @wraps(fn)
     @jwt_required()
@@ -93,7 +87,6 @@ def admin_required(fn):
         return fn(*args, **kwargs)
     return wrapper
 
-# ------------------- تسجيل التدقيق -------------------
 def log_audit(action, table_name, record_id, details, request_obj):
     user_id = get_jwt_identity() if request_obj.headers.get('Authorization') else None
     username = None
@@ -110,7 +103,6 @@ def log_audit(action, table_name, record_id, details, request_obj):
     ''', (user_id, username, action, table_name, record_id, details, ip, now))
     conn.commit()
 
-# ------------------- تسجيل الخروج -------------------
 @app.route('/api/logout', methods=['POST'])
 @jwt_required()
 def logout():
@@ -122,7 +114,6 @@ def logout():
     log_audit('تسجيل خروج', 'auth', 0, '', request)
     return jsonify({'status': 'logged out'}), 200
 
-# ------------------- المصادقة -------------------
 @app.route('/api/login', methods=['POST'])
 @limiter.limit("5 per minute")
 def login():
@@ -148,7 +139,6 @@ def login():
     else:
         return jsonify({'error': 'Invalid credentials'}), 401
 
-# ------------------- المصروفات -------------------
 @app.route('/api/expenses', methods=['GET'])
 @jwt_required()
 @limiter.limit("100 per minute")
@@ -227,7 +217,6 @@ def delete_expense(expense_id):
     log_audit('حذف قيد', 'expenses', expense_id, details, request)
     return jsonify({'status': 'ok'})
 
-# ------------------- المستخدمين -------------------
 @app.route('/api/users', methods=['GET'])
 @admin_required
 @limiter.limit("60 per minute")
@@ -299,7 +288,6 @@ def change_password():
     log_audit('تغيير كلمة مرور', 'users', user_id, '', request)
     return jsonify({'status': 'ok'})
 
-# ------------------- سجل التدقيق -------------------
 @app.route('/api/audit_log', methods=['GET'])
 @admin_required
 @limiter.limit("30 per minute")
@@ -321,10 +309,9 @@ def delete_old_audit_logs():
     log_audit('حذف سجلات تدقيق قديمة', 'audit_log', 0, f'أقدم من {days} يوماً', request)
     return jsonify({'status': 'ok'})
 
-# ------------------- الإعدادات (رفع الحد بشكل كبير) -------------------
 @app.route('/api/settings/<key>', methods=['GET'])
 @jwt_required()
-@limiter.limit("500 per minute")  # تم رفع الحد من 100 إلى 500
+@limiter.limit("500 per minute")
 def get_setting(key):
     conn = get_db()
     row = conn.execute('SELECT value FROM settings WHERE key = ?', (key,)).fetchone()
@@ -342,10 +329,9 @@ def set_setting(key):
     log_audit('تعديل إعداد', 'settings', 0, f'{key} = {value}', request)
     return jsonify({'status': 'ok'})
 
-# ------------------- أسعار الصرف -------------------
 @app.route('/api/exchange_rates', methods=['GET'])
 @jwt_required()
-@limiter.limit("200 per minute")  # نقطة أسعار الصرف أيضاً
+@limiter.limit("200 per minute")
 def get_exchange_rates():
     conn = get_db()
     rows = conn.execute('SELECT currency_code, rate_to_usd, updated_at FROM exchange_rates ORDER BY currency_code').fetchall()
@@ -366,11 +352,9 @@ def update_exchange_rate(currency_code):
     log_audit('تحديث سعر صرف', 'exchange_rates', 0, f'{currency_code} = {rate_to_usd}', request)
     return jsonify({'status': 'ok'})
 
-# ------------------- الصحة -------------------
 @app.route('/health', methods=['GET'])
 def health():
     return jsonify({'status': 'alive'})
 
 if __name__ == '__main__':
-    # سيتم تشغيل الخادم عبر waitress من main.py --server أو run_server.py
     pass

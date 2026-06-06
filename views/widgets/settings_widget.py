@@ -218,6 +218,18 @@ class SettingsWidget(QWidget):
         self.server_url_edit.setText(server_url)
         form.addRow("عنوان الخادم البعيد:", self.server_url_edit)
 
+        # التحقق من تفعيل الشبكة
+        from auth.activation import check_network_activation
+        network_ok, network_msg = check_network_activation()
+        if not network_ok:
+            self.mode_combo.setItemText(1, "عميل (غير متاح - قم بالتفعيل)")
+            self.mode_combo.setItemText(2, "خادم (غير متاح - قم بالتفعيل)")
+            self.mode_combo.setCurrentIndex(0)
+            self.mode_combo.setEnabled(False)
+            warning_label = QLabel(f"⚠️ {network_msg}. يرجى تفعيل ميزة الشبكة من تبويب الترخيص.")
+            warning_label.setStyleSheet("color: orange; font-weight: bold; margin: 5px;")
+            form.addRow(warning_label)
+
         self.connection_test_label = QLabel("")
         self.connection_test_label.setStyleSheet("font-size: 10px;")
         form.addRow(self.connection_test_label)
@@ -373,8 +385,6 @@ class SettingsWidget(QWidget):
         qsettings = QSettings("Hawaa", "Accounting")
         qsettings.setValue("network/mode", mode)
         qsettings.setValue("network/server_url", self.server_url_edit.text())
-        # مسح الكاش لأن تغيير وضع الشبكة يؤثر على الإعدادات
-        self.repo.clear_cache()
         if mode == 'server':
             try:
                 resp = requests.get("http://localhost:8000/health", timeout=1)
@@ -569,7 +579,6 @@ class SettingsWidget(QWidget):
                 if was_running:
                     self._start_backend_server()
                 self.load_rates_table()
-                # مسح الكاش بعد تغيير قاعدة البيانات
                 self.repo.clear_cache()
                 QMessageBox.information(self, "تنبيه", "يرجى إعادة تشغيل التطبيق لتحديث جميع المكونات.")
 
@@ -611,7 +620,6 @@ class SettingsWidget(QWidget):
             self.repo.clear_cache()
             QMessageBox.information(self, "تنبيه", "يرجى إعادة تشغيل التطبيق لتحديث جميع المكونات.")
 
-    # دوال إيقاف/تشغيل الخادم الخلفي
     def _is_backend_server_running(self):
         if self.server_process and self.server_process.poll() is None:
             return True
@@ -713,7 +721,6 @@ class SettingsWidget(QWidget):
                 QMessageBox.warning(self, "خطأ", f"سعر غير صالح للعملة {code}: {rate_text}")
                 return
 
-        # مسح الكاش بعد تغيير إعدادات العملة
         self.repo.clear_cache()
         QMessageBox.information(self, translate('success'), "تم حفظ إعدادات العملة وأسعار الصرف")
         main_window = self.window()
@@ -747,7 +754,6 @@ class SettingsWidget(QWidget):
         lang_map = {0: 'ar', 1: 'en', 2: 'fr'}
         new_lang = lang_map[self.lang_combo.currentIndex()]
         self.repo.set('language', new_lang)
-        # مسح الكاش بعد تغيير اللغة
         self.repo.clear_cache()
         set_language(new_lang)
         QMessageBox.information(self, translate('success'), "سيتم تطبيق اللغة بعد إعادة التشغيل")
@@ -755,7 +761,6 @@ class SettingsWidget(QWidget):
     def save_theme(self):
         theme = 'light' if self.theme_combo.currentIndex() == 0 else 'dark'
         self.repo.set('theme', theme)
-        # مسح الكاش بعد تغيير الثيم
         self.repo.clear_cache()
         main_window = self.window()
         if hasattr(main_window, 'apply_theme'):
@@ -776,6 +781,5 @@ class SettingsWidget(QWidget):
             'logo_path': self.company_logo_path_edit.text(),
         }
         save_company_info(info)
-        # مسح الكاش بعد تغيير معلومات الشركة (إذا تم استخدامها في أي مكان)
         self.repo.clear_cache()
         QMessageBox.information(self, "نجاح", "تم حفظ معلومات الشركة")

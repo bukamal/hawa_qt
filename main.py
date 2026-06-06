@@ -12,7 +12,7 @@ from PyQt5.QtWidgets import QApplication, QMessageBox, QDialog, QVBoxLayout, QDi
 from PyQt5.QtCore import QTimer, QSettings, Qt
 from PyQt5.QtGui import QFont
 from database import ensure_db
-from auth.activation import check_activation, start_license_checker, stop_license_checker
+from auth.activation import check_activation, start_license_checker, stop_license_checker, check_network_activation
 from theme_manager import ThemeManager
 from views.splash_screen import ModernSplashScreen
 from views.activation_dialog import ActivationDialog
@@ -35,7 +35,6 @@ def on_license_invalid():
     QTimer.singleShot(0, show)
 
 def run_flask_server():
-    """تشغيل خادم Flask في عملية منفصلة (نفس الـ exe مع معامل --server)"""
     error_log = os.path.join(tempfile.gettempdir(), "hawaa_subprocess_error.log")
     try:
         exe_path = sys.executable
@@ -127,7 +126,6 @@ def test_server_connection(url):
         return False
 
 def open_network_settings():
-    """فتح نافذة إعدادات الشبكة وإرجاع True إذا حفظ المستخدم الإعدادات، وإلا False"""
     from views.widgets.settings_widget import SettingsWidget
     dialog = QDialog()
     dialog.setWindowTitle("إعدادات الشبكة")
@@ -143,7 +141,6 @@ def open_network_settings():
     return dialog.exec() == QDialog.Accepted
 
 def main():
-    # إذا تم تشغيل التطبيق كخادم منفصل
     if len(sys.argv) > 1 and sys.argv[1] == '--server':
         print("تشغيل خادم هوى الشام...")
         from database.migrations import ensure_db as ensure_db_remote
@@ -163,6 +160,16 @@ def main():
     db_conn = DatabaseConnection()
     mode = db_conn.mode
     server_url = db_conn.server_url
+
+    # التحقق من تفعيل الشبكة قبل السماح بوضع عميل/خادم
+    if mode in ("client", "server"):
+        network_ok, network_msg = check_network_activation()
+        if not network_ok:
+            QMessageBox.critical(None, "تفعيل الشبكة مطلوب", 
+                                 f"{network_msg}\n\nسيتم تشغيل التطبيق في الوضع المحلي.")
+            mode = "local"
+            settings.setValue("network/mode", "local")
+            db_conn.mode = "local"
 
     if mode == "server":
         run_flask_server()
@@ -194,7 +201,6 @@ def main():
     if not activated:
         old_splash = splash
         splash.hide()
-        # تمرير النافذة الأم (splash) إلى ActivationDialog
         dlg = ActivationDialog(old_splash)
         if dlg.exec() != ActivationDialog.Accepted:
             old_splash.close()
@@ -207,7 +213,6 @@ def main():
     start_license_checker(24, on_license_invalid)
 
     splash.set_progress(60, "تسجيل الدخول...")
-    # تمرير النافذة الأم (splash) إلى LoginDialog
     login = LoginDialog(splash)
     splash.hide()
     if login.exec() != LoginDialog.Accepted:
@@ -217,7 +222,7 @@ def main():
     if UserSession.force_password_change():
         from views.dialogs.change_password_dialog import ChangePasswordDialog
         from database import UserRepository
-        dlg = ChangePasswordDialog()  # سيتم تمرير parent لاحقاً من MainWindow
+        dlg = ChangePasswordDialog()
         if dlg.exec():
             repo = UserRepository()
             repo.set_force_password_change(UserSession.get_current()['id'], False)
