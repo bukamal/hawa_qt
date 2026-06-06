@@ -43,22 +43,29 @@ jobs:
           --add-data "${{ steps.qtpath.outputs.platforms_path }};platforms" `
           --onedir --windowed --name HawaaSham main.py
 
-    - name: Download Inno Setup (stable direct link)
+    - name: Download Inno Setup (GitHub Immutable Release)
       run: |
-        $url = "https://files.jrsoftware.org/is/6/innosetup-6.2.2.exe"
+        $url = "https://github.com/jrsoftware/issrc/releases/download/is-6_7_3/innosetup-6.7.3.exe"
         $output = "innosetup.exe"
-        Write-Host "Downloading Inno Setup from $url"
+        Write-Host "Downloading Inno Setup 6.7.3 from official GitHub release..."
         Invoke-WebRequest -Uri $url -OutFile $output -UseBasicParsing
+        
         if (-not (Test-Path $output)) {
           Write-Error "Download failed: file not found"
           exit 1
         }
+        
         $size = (Get-Item $output).Length
         Write-Host "Downloaded $size bytes"
-        if ($size -lt 1MB) {
-          Write-Error "Downloaded file is too small (likely an error page)"
+        
+        # Verify it's a valid executable (MZ header)
+        $bytes = [System.IO.File]::ReadAllBytes($output)[0..1]
+        if ($bytes[0] -ne 0x4D -or $bytes[1] -ne 0x5A) {
+          Write-Error "Downloaded file is not a valid executable (MZ header missing)"
           exit 1
         }
+        
+        Write-Host "Installing Inno Setup 6.7.3 silently..."
         .\$output /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
 
     - name: Download Arabic Language File
