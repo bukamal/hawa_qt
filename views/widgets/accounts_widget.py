@@ -158,7 +158,7 @@ class AccountsWidget(QWidget):
 <tbody>
 """
         for row in data:
-            html += "<tr>" + "".join(f"一位{cell}一位" for cell in row) + "</tr>"
+            html += "<td>" + "".join(f"一位{cell}一位" for cell in row) + "</tr>"
         html += f"""
 </tbody>
 </table>
@@ -253,6 +253,9 @@ class AccountsWidget(QWidget):
             QMessageBox.warning(self, "تنبيه", "لا توجد بيانات لهذه الشركة خلال الفترة المحددة")
             return
         dialog.accept()
+
+        # === إضافة ترتيب القيود حسب التاريخ (تصاعدياً) لحساب الرصيد التراكمي بشكل صحيح ===
+        filtered.sort(key=lambda x: x['date'])
 
         display_currency = currency.get_display_currency()
         
