@@ -28,7 +28,7 @@ jobs:
         $path = python -c "import PyQt5, os; print(os.path.join(os.path.dirname(PyQt5.__file__), 'Qt5', 'plugins', 'platforms'))"
         echo "platforms_path=$path" >> $env:GITHUB_OUTPUT
 
-    - name: Build with PyInstaller (OneDir, windowed mode - no console)
+    - name: Build with PyInstaller (OneDir, windowed mode)
       run: |
         pyinstaller --collect-all PyQt5 --collect-all PyQtWebEngine `
           --collect-all flask --collect-all flask_jwt_extended --collect-all flask_limiter `
@@ -43,14 +43,30 @@ jobs:
           --add-data "${{ steps.qtpath.outputs.platforms_path }};platforms" `
           --onedir --windowed --name HawaaSham main.py
 
-    - name: Download Inno Setup
+    - name: Download Inno Setup (stable direct link)
       run: |
-        curl -L -o is.exe https://jrsoftware.org/download.php/is.exe
-        ./is.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
+        $url = "https://files.jrsoftware.org/is/6/innosetup-6.2.2.exe"
+        $output = "innosetup.exe"
+        Write-Host "Downloading Inno Setup from $url"
+        Invoke-WebRequest -Uri $url -OutFile $output -UseBasicParsing
+        if (-not (Test-Path $output)) {
+          Write-Error "Download failed: file not found"
+          exit 1
+        }
+        $size = (Get-Item $output).Length
+        Write-Host "Downloaded $size bytes"
+        if ($size -lt 1MB) {
+          Write-Error "Downloaded file is too small (likely an error page)"
+          exit 1
+        }
+        .\$output /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
 
     - name: Download Arabic Language File
       run: |
-        curl -L -o "C:\Program Files (x86)\Inno Setup 6\Languages\Arabic.isl" https://raw.githubusercontent.com/jrsoftware/issrc/main/Files/Languages/Arabic.isl
+        $langUrl = "https://raw.githubusercontent.com/jrsoftware/issrc/main/Files/Languages/Arabic.isl"
+        $langPath = "C:\Program Files (x86)\Inno Setup 6\Languages\Arabic.isl"
+        New-Item -ItemType Directory -Force -Path (Split-Path $langPath -Parent) | Out-Null
+        Invoke-WebRequest -Uri $langUrl -OutFile $langPath -UseBasicParsing
 
     - name: Create Installer Script
       run: |
