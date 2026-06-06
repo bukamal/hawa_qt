@@ -1,4 +1,4 @@
-from PyQt5.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLineEdit, QHeaderView, QMessageBox, QComboBox, QDateEdit, QLabel, QDialog, QFormLayout, QDialogButtonBox
+from PyQt5.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLineEdit, QHeaderView, QMessageBox, QComboBox, QDateEdit, QLabel, QDialog, QFormLayout, QDialogButtonBox, QRadioButton, QButtonGroup, QCheckBox
 from PyQt5.QtCore import Qt, QDate, pyqtSignal
 from database import ExpenseRepository
 from i18n.translator import translate
@@ -171,7 +171,7 @@ class AccountsWidget(QWidget):
         dialog = QDialog(self)
         dialog.setWindowTitle("تقرير مخصص لشركة")
         dialog.setLayoutDirection(Qt.RightToLeft)
-        dialog.resize(450, 300)
+        dialog.resize(500, 400)
         layout = QVBoxLayout(dialog)
 
         form = QFormLayout()
@@ -209,6 +209,22 @@ class AccountsWidget(QWidget):
         self.end_date.setCalendarPopup(True)
         form.addRow("إلى تاريخ:", self.end_date)
 
+        # خيارات التقرير
+        self.report_type_group = QButtonGroup()
+        self.radio_period = QRadioButton("تقرير فترة (Period)")
+        self.radio_cumulative = QRadioButton("تقرير تراكمي (Cumulative)")
+        self.radio_period.setChecked(True)
+        self.report_type_group.addButton(self.radio_period)
+        self.report_type_group.addButton(self.radio_cumulative)
+        report_layout = QHBoxLayout()
+        report_layout.addWidget(self.radio_period)
+        report_layout.addWidget(self.radio_cumulative)
+        form.addRow("نوع التقرير:", report_layout)
+
+        self.show_historical_rate_check = QCheckBox("عرض سعر الصرف التاريخي للعملة")
+        self.show_historical_rate_check.setChecked(False)
+        form.addRow(self.show_historical_rate_check)
+
         layout.addLayout(form)
 
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
@@ -245,31 +261,42 @@ class AccountsWidget(QWidget):
     def generate_company_report(self, dialog):
         company = self.company_combo.currentText()
         start_date, end_date = self.get_date_range()
+        is_cumulative = self.radio_cumulative.isChecked()
+        show_historical_rate = self.show_historical_rate_check.isChecked()
 
         repo = ExpenseRepository()
-        records = repo.get_by_company(company, convert_to_display=False)
-        filtered = [r for r in records if start_date <= r['date'] <= end_date]
-        if not filtered:
+        all_records = repo.get_by_company(company, convert_to_display=False)
+        # ترتيب جميع القيود حسب التاريخ (لحساب الرصيد الافتتاحي والتراكمي)
+        all_records.sort(key=lambda x: x['date'])
+        
+        # تصفية القيود داخل الفترة لعرضها في الجدول
+        period_records = [r for r in all_records if start_date <= r['date'] <= end_date]
+        if not period_records:
             QMessageBox.warning(self, "تنبيه", "لا توجد بيانات لهذه الشركة خلال الفترة المحددة")
             return
         dialog.accept()
 
-        # === إضافة ترتيب القيود حسب التاريخ (تصاعدياً) لحساب الرصيد التراكمي بشكل صحيح ===
-        filtered.sort(key=lambda x: x['date'])
-
         display_currency = currency.get_display_currency()
         
-        # حساب الإجماليات للفترة
-        total_in_usd = sum(r['amount'] for r in filtered if r['type'] == 'incoming')
-        total_out_usd = sum(r['amount'] for r in filtered if r['type'] == 'outgoing')
+        # حساب الإجماليات للفترة فقط (لأنها تعرض في الملخص)
+        total_in_usd = sum(r['amount'] for r in period_records if r['type'] == 'incoming')
+        total_out_usd = sum(r['amount'] for r in period_records if r['type'] == 'outgoing')
         net_usd = total_in_usd - total_out_usd
         total_in_display = currency.convert(total_in_usd, 'USD', display_currency)
         total_out_display = currency.convert(total_out_usd, 'USD', display_currency)
         net_display = currency.convert(net_usd, 'USD', display_currency)
         
+        # حساب الرصيد الافتتاحي (للتقرير التراكمي)
+        opening_balance_usd = 0.0
+        if is_cumulative:
+            opening_records = [r for r in all_records if r['date'] < start_date]
+            opening_balance_usd = sum(r['amount'] if r['type'] == 'incoming' else -r['amount'] for r in opening_records)
+        opening_balance_display = currency.convert(opening_balance_usd, 'USD', display_currency)
+        
+        # إنشاء الجدول
         table_rows = ""
-        running_usd = 0.0
-        for r in filtered:
+        running_usd = opening_balance_usd
+        for r in period_records:
             amount_original = r['amount_original']
             currency_original = r['currency_original']
             amount_str = f"{amount_original:,.2f} {currency_original}"
@@ -286,6 +313,13 @@ class AccountsWidget(QWidget):
             running_display = currency.convert(running_usd, 'USD', display_currency)
             running_str = currency.format_amount(running_display, display_currency)
             row_class = "income-row" if r['type'] == 'incoming' else "expense-row"
+            
+            # عمود سعر الصرف التاريخي (إذا كان مطلوباً)
+            historical_rate_col = ""
+            if show_historical_rate:
+                exchange_rate = r.get('exchange_rate_to_usd', 1.0)
+                historical_rate_col = f'<td class="center">{exchange_rate:.4f}</td>'
+            
             table_rows += f"""
             <tr class="{row_class}">
                 <td class="center">{date_display}</td>
@@ -293,8 +327,44 @@ class AccountsWidget(QWidget):
                 <td class="center">{incoming_str}</td>
                 <td class="center">{outgoing_str}</td>
                 <td class="center">{running_str}</td>
-              </tr>
+                {historical_rate_col}
+            </tr>
 """
+        # حساب الرصيد الختامي (للتقرير التراكمي)
+        closing_balance_usd = running_usd
+        closing_balance_display = currency.convert(closing_balance_usd, 'USD', display_currency)
+        
+        # إضافة صف الرصيد الافتتاحي إذا كان تراكمياً
+        opening_row = ""
+        if is_cumulative and opening_balance_usd != 0:
+            opening_row = f"""
+            <tr class="opening-row">
+                <td class="center">قبل {start_date}</td>
+                <td class="right">الرصيد الافتتاحي</td>
+                <td class="center">—</td>
+                <td class="center">—</td>
+                <td class="center">{currency.format_amount(opening_balance_display, display_currency)}</td>
+                {('<td class="center">—</td>' if show_historical_rate else '')}
+            </tr>
+"""
+        # إضافة صف الرصيد الختامي إذا كان تراكمياً
+        closing_row = ""
+        if is_cumulative:
+            closing_row = f"""
+            <tr class="closing-row">
+                <td class="center">بعد {end_date}</td>
+                <td class="right">الرصيد الختامي</td>
+                <td class="center">—</td>
+                <td class="center">—</td>
+                <td class="center">{currency.format_amount(closing_balance_display, display_currency)}</td>
+                {('<td class="center">—</td>' if show_historical_rate else '')}
+            </tr>
+"""
+        # بناء رأس الجدول حسب الخيارات
+        headers = "<th>التاريخ</th><th>ملاحظات</th><th>لنا</th><th>له</th><th>التراكمي</th>"
+        if show_historical_rate:
+            headers += "<th>سعر الصرف (USD)</th>"
+        
         html = f"""<!DOCTYPE html>
 <html dir="rtl" lang="ar">
 <head><meta charset="UTF-8"><title>تقرير شركة {company}</title>
@@ -308,6 +378,7 @@ class AccountsWidget(QWidget):
     th {{ background: #2c3e50; color: white; }}
     .income-row td {{ background-color: #d4edda; }}
     .expense-row td {{ background-color: #f8d7da; }}
+    .opening-row td, .closing-row td {{ background-color: #fff3cd; font-weight: bold; }}
     .footer {{ text-align: center; margin-top: 30px; font-size: 12px; color: gray; }}
     .center {{ text-align: center; }}
     .right {{ text-align: right; }}
@@ -322,10 +393,12 @@ class AccountsWidget(QWidget):
         💰 صافي: {currency.format_amount(net_display, display_currency)}
     </div>
     <table>
-        <thead>
-            <tr><th>التاريخ</th><th>ملاحظات</th><th>لنا</th><th>له</th><th>التراكمي</th></tr>
-        </thead>
-        <tbody>{table_rows}</tbody>
+        <thead><tr>{headers}</tr></thead>
+        <tbody>
+            {opening_row}
+            {table_rows}
+            {closing_row}
+        </tbody>
     </table>
     <div class="footer">نظام هوى الشام للسياحة والسفر<br>تاريخ الطباعة: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}</div>
 </body>
