@@ -1,4 +1,9 @@
-from PyQt5.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLineEdit, QHeaderView, QMessageBox, QComboBox, QDateEdit, QLabel, QDialog, QFormLayout, QDialogButtonBox, QRadioButton, QButtonGroup, QCheckBox
+from PyQt5.QtWidgets import (
+    QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLineEdit, QHeaderView,
+    QMessageBox, QComboBox, QDateEdit, QLabel, QDialog, QFormLayout,
+    QDialogButtonBox, QRadioButton, QButtonGroup, QCheckBox, QGroupBox,
+    QSpinBox
+)
 from PyQt5.QtCore import Qt, QDate, pyqtSignal
 from database import ExpenseRepository
 from i18n.translator import translate
@@ -8,12 +13,109 @@ from views.dialogs.add_edit_expense_dialog import AddEditExpenseDialog
 from views.dialogs.company_details_dialog import CompanyDetailsDialog
 from currency import currency
 from auth.session import UserSession
+from config import get_company_info
 from collections import defaultdict
 from datetime import datetime
 import webbrowser
 import tempfile
 import os
+import re
 
+# ------------------- حوار خيارات الطباعة -------------------
+class PrintOptionsDialog(QDialog):
+    """حوار بسيط لخيارات طباعة تقرير إجماليات الشركات"""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("خيارات الطباعة")
+        self.setLayoutDirection(Qt.RightToLeft)
+        self.resize(450, 550)
+        layout = QVBoxLayout(self)
+        layout.setSpacing(15)
+        layout.setContentsMargins(20, 20, 20, 20)
+
+        # ----- الترويسة -----
+        header_group = QGroupBox("الترويسة")
+        header_layout = QFormLayout(header_group)
+        header_layout.setLabelAlignment(Qt.AlignRight)
+        self.show_company_name = QCheckBox("إظهار اسم الشركة")
+        self.show_company_name.setChecked(True)
+        self.show_address = QCheckBox("إظهار العنوان والهاتف والبريد")
+        self.show_address.setChecked(True)
+        self.show_logo = QCheckBox("إظهار الشعار (إن وجد)")
+        self.show_logo.setChecked(True)
+        self.custom_title = QLineEdit()
+        self.custom_title.setPlaceholderText("عنوان إضافي للتقرير (اختياري)")
+        header_layout.addRow(self.show_company_name)
+        header_layout.addRow(self.show_address)
+        header_layout.addRow(self.show_logo)
+        header_layout.addRow("عنوان إضافي:", self.custom_title)
+        layout.addWidget(header_group)
+
+        # ----- الجدول -----
+        table_group = QGroupBox("الجدول")
+        table_layout = QFormLayout(table_group)
+        table_layout.setLabelAlignment(Qt.AlignRight)
+        self.colorize_rows = QCheckBox("تلوين الصفوف (أخضر للموجب، أحمر للسالب)")
+        self.colorize_rows.setChecked(True)
+        self.colorize_numbers = QCheckBox("تلوين الأرقام (أخضر/أحمر)")
+        self.colorize_numbers.setChecked(True)
+        self.show_row_numbers = QCheckBox("إظهار عمود # (ترقيم الصفوف)")
+        self.show_row_numbers.setChecked(True)
+        table_layout.addRow(self.colorize_rows)
+        table_layout.addRow(self.colorize_numbers)
+        table_layout.addRow(self.show_row_numbers)
+        layout.addWidget(table_group)
+
+        # ----- التنسيق -----
+        style_group = QGroupBox("التنسيق")
+        style_layout = QFormLayout(style_group)
+        style_layout.setLabelAlignment(Qt.AlignRight)
+        self.font_size = QSpinBox()
+        self.font_size.setRange(8, 20)
+        self.font_size.setValue(10)
+        style_layout.addRow("حجم الخط (pt):", self.font_size)
+        layout.addWidget(style_group)
+
+        # ----- التذييل -----
+        footer_group = QGroupBox("التذييل")
+        footer_layout = QFormLayout(footer_group)
+        footer_layout.setLabelAlignment(Qt.AlignRight)
+        self.show_datetime = QCheckBox("إظهار تاريخ ووقت الطباعة")
+        self.show_datetime.setChecked(True)
+        self.show_printed_by = QCheckBox("إظهار اسم المستخدم الطابع")
+        self.show_printed_by.setChecked(True)
+        self.footer_note = QLineEdit()
+        self.footer_note.setPlaceholderText("ملاحظة ختامية (اختياري)")
+        footer_layout.addRow(self.show_datetime)
+        footer_layout.addRow(self.show_printed_by)
+        footer_layout.addRow("ملاحظة:", self.footer_note)
+        layout.addWidget(footer_group)
+
+        # ----- أزرار -----
+        btn_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        btn_box.accepted.connect(self.accept)
+        btn_box.rejected.connect(self.reject)
+        btn_box.button(QDialogButtonBox.Ok).setText("طباعة")
+        btn_box.button(QDialogButtonBox.Cancel).setText("إلغاء")
+        layout.addWidget(btn_box)
+
+    def get_settings(self):
+        return {
+            'show_company_name': self.show_company_name.isChecked(),
+            'show_address': self.show_address.isChecked(),
+            'show_logo': self.show_logo.isChecked(),
+            'custom_title': self.custom_title.text(),
+            'colorize_rows': self.colorize_rows.isChecked(),
+            'colorize_numbers': self.colorize_numbers.isChecked(),
+            'show_row_numbers': self.show_row_numbers.isChecked(),
+            'font_size': self.font_size.value(),
+            'show_datetime': self.show_datetime.isChecked(),
+            'show_printed_by': self.show_printed_by.isChecked(),
+            'footer_note': self.footer_note.text(),
+        }
+
+
+# ------------------- AccountsWidget -------------------
 class AccountsWidget(QWidget):
     data_changed = pyqtSignal()
 
@@ -28,7 +130,7 @@ class AccountsWidget(QWidget):
         self.search_edit.setPlaceholderText(translate('search'))
         self.search_edit.textChanged.connect(self.refresh_table)
         search_layout.addWidget(self.search_edit)
-        
+
         self.add_btn = QPushButton("➕ " + translate('add'))
         self.add_btn.clicked.connect(self.add_record)
         if not UserSession.is_admin() and UserSession.get_current().get('role') == 'viewer':
@@ -66,7 +168,7 @@ class AccountsWidget(QWidget):
             if search and search not in e['company_name'].lower():
                 continue
             groups[e['company_name']][e['type']] += e['amount']
-        
+
         display_currency = currency.get_display_currency()
         data = []
         for company, vals in groups.items():
@@ -111,26 +213,58 @@ class AccountsWidget(QWidget):
         if hasattr(self, 'table'):
             self.table.refresh_style()
 
+    @staticmethod
+    def clean_text(text):
+        if not text:
+            return ''
+        text = str(text)
+        bad = ['\u200e', '\u200f', '\ufeff', '\u202a', '\u202b', '\u202c', '\u202d', '\u202e', '浏', '']
+        for ch in bad:
+            text = text.replace(ch, '')
+        text = re.sub(r'[^\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFFa-zA-Z0-9\s\-\.\,\:\;\(\)\/\+%\$]', '', text)
+        text = re.sub(r'\s+', ' ', text)
+        return text.strip()
+
     def print_report(self):
-        """طباعة تقرير عام لجميع الشركات (بجودة عالية وخالية من الأخطاء)"""
+        """طباعة تقرير إجماليات الشركات مع حوار خيارات"""
+        if self.table.model().rowCount() == 0:
+            QMessageBox.warning(self, translate('warning'), translate('no_data_for_print'))
+            return
+
+        dialog = PrintOptionsDialog(self)
+        if dialog.exec() != QDialog.Accepted:
+            return
+        settings = dialog.get_settings()
+        html = self.generate_html_report(settings)
+        fd, temp = tempfile.mkstemp(suffix='.html', prefix='hawaa_report_')
+        os.close(fd)
+        with open(temp, 'w', encoding='utf-8') as f:
+            f.write(html)
+        webbrowser.open(f'file://{temp}')
+        QMessageBox.information(self, translate('print_report'), translate('report_opened_in_browser'))
+
+    def generate_html_report(self, settings):
+        """توليد HTML للتقرير مع تطبيق إعدادات الطباعة"""
+        # الحصول على البيانات الأصلية
         repo = ExpenseRepository()
         try:
             expenses = repo.get_all(convert_to_display=False)
         except Exception as e:
             QMessageBox.critical(self, "خطأ", f"فشل تحميل البيانات: {str(e)}")
-            return
-        
+            return ""
+
+        # تجميع البيانات
         groups = defaultdict(lambda: {'incoming': 0.0, 'outgoing': 0.0})
         for e in expenses:
             groups[e['company_name']][e['type']] += e['amount']
-        
+
         display_currency = currency.get_display_currency()
         decimals = currency.get_currency_decimals()
         symbol = currency.get_currency_symbol(display_currency)
-        
+
         def format_full(amount):
             return f"{amount:,.{decimals}f} {symbol}"
-        
+
         data_rows = []
         total_in_all = 0.0
         total_out_all = 0.0
@@ -140,18 +274,82 @@ class AccountsWidget(QWidget):
             net = incoming - outgoing
             total_in_all += incoming
             total_out_all += outgoing
-            data_rows.append([
-                company,
-                format_full(incoming),
-                format_full(outgoing),
-                format_full(net)
-            ])
+            data_rows.append([company, incoming, outgoing, net, net])
         data_rows.sort(key=lambda x: x[0])
-        
-        headers = [translate('company_name'), translate('total_incoming'), translate('total_outgoing'), translate('net')]
+
+        total_net = total_in_all - total_out_all
+
+        # تطبيق الإعدادات
+        show_company_name = settings.get('show_company_name', True)
+        show_address = settings.get('show_address', True)
+        show_logo = settings.get('show_logo', True)
+        custom_title = settings.get('custom_title', '')
+        colorize_rows = settings.get('colorize_rows', True)
+        colorize_numbers = settings.get('colorize_numbers', True)
+        show_row_numbers = settings.get('show_row_numbers', True)
+        font_size = settings.get('font_size', 10)
+        show_datetime = settings.get('show_datetime', True)
+        show_printed_by = settings.get('show_printed_by', True)
+        footer_note = settings.get('footer_note', '')
+
+        company_info = get_company_info()
         now = datetime.now()
-        date_str = now.strftime("%Y-%m-%d %H:%M:%S")
-        
+        date_str = now.strftime("%Y-%m-%d")
+        time_str = now.strftime("%H:%M:%S")
+
+        # بناء الترويسة
+        header_html = ""
+        if show_company_name:
+            header_html += f"<strong>{self.clean_text(company_info.get('name', 'هوى الشام للسياحة والسفر'))}</strong><br>"
+        if show_address:
+            header_html += f"{self.clean_text(company_info.get('address', ''))} | 📞 {self.clean_text(company_info.get('phone', ''))} | ✉️ {self.clean_text(company_info.get('email', ''))}<br>"
+        if show_logo and company_info.get('logo_path') and os.path.exists(company_info['logo_path']):
+            # يمكن إضافة الشعار لاحقاً
+            pass
+
+        # بناء الجدول
+        table_rows = ""
+        for idx, row in enumerate(data_rows, start=1):
+            net_val = row[4]
+            row_class = ""
+            if colorize_rows:
+                row_class = "income-row" if net_val >= 0 else "expense-row"
+            # تلوين الأرقام
+            net_class = ""
+            if colorize_numbers:
+                net_class = "income" if net_val >= 0 else "expense"
+            incoming_class = "income" if colorize_numbers else ""
+            outgoing_class = "expense" if colorize_numbers else ""
+
+            # عمود الترقيم
+            num_col = f'<td class="center">{idx}</td>' if show_row_numbers else ''
+
+            table_rows += f"""
+            <tr class="{row_class}">
+                {num_col}
+                <td class="right">{self.clean_text(row[0])}</td>
+                <td class="center {incoming_class}">{self.clean_text(format_full(row[1]))}</td>
+                <td class="center {outgoing_class}">{self.clean_text(format_full(row[2]))}</td>
+                <td class="center {net_class}">{self.clean_text(format_full(row[3]))}</td>
+            </table>"""
+
+        # بناء التذييل
+        footer_text = ""
+        if show_printed_by:
+            user = UserSession.get_current()
+            footer_text += f"طبع بواسطة: {user.get('username', '')} | "
+        if show_datetime:
+            footer_text += f"تاريخ الطباعة: {date_str} {time_str}"
+        if footer_note:
+            footer_text += f"<br>{self.clean_text(footer_note)}"
+
+        # تحديد رؤوس الأعمدة
+        headers = []
+        if show_row_numbers:
+            headers.append('#')
+        headers.extend([translate('company_name'), translate('total_incoming'), translate('total_outgoing'), translate('net')])
+
+        # بناء HTML النهائي
         html = f"""<!DOCTYPE html>
 <html dir="rtl" lang="ar">
 <head>
@@ -160,9 +358,10 @@ class AccountsWidget(QWidget):
     <style>
         body {{
             font-family: 'Tajawal', 'Segoe UI', Tahoma, Arial;
-            margin: 2cm;
+            margin: 1.5cm;
             direction: rtl;
             background: white;
+            font-size: {font_size}pt;
         }}
         h1 {{
             text-align: center;
@@ -170,11 +369,22 @@ class AccountsWidget(QWidget):
             border-bottom: 2px solid #3498db;
             padding-bottom: 8px;
         }}
-        .report-date {{
+        .company-info {{
             text-align: center;
-            color: #6c757d;
-            font-size: 12px;
             margin-bottom: 20px;
+            color: #2c3e50;
+            border: 1px solid #ddd;
+            padding: 8px;
+            background: #f9f9f9;
+        }}
+        .summary {{
+            text-align: center;
+            margin: 20px 0;
+            font-size: 16px;
+            font-weight: bold;
+            background: #e9ecef;
+            padding: 10px;
+            border-radius: 8px;
         }}
         table {{
             width: 100%;
@@ -191,11 +401,18 @@ class AccountsWidget(QWidget):
             color: white;
             font-weight: bold;
         }}
-        tr:nth-child(even) {{
-            background-color: #f2f2f2;
+        .income-row td {{
+            background-color: #d4edda;
         }}
-        .total-row {{
-            background-color: #e9ecef;
+        .expense-row td {{
+            background-color: #f8d7da;
+        }}
+        .income {{
+            color: #28a745;
+            font-weight: bold;
+        }}
+        .expense {{
+            color: #dc3545;
             font-weight: bold;
         }}
         .footer {{
@@ -206,49 +423,38 @@ class AccountsWidget(QWidget):
             border-top: 1px solid #dee2e6;
             padding-top: 10px;
         }}
+        .center {{ text-align: center; }}
+        .right {{ text-align: right; }}
     </style>
 </head>
 <body>
-    <h1>تقرير حسابات الشركات</h1>
-    <div class="report-date">تاريخ الطباعة: {date_str}</div>
-    </table>
+    <h1>{' - '.join(filter(None, ['تقرير حسابات الشركات', custom_title]))}</h1>
+    <div class="company-info">{header_html}</div>
+    <div class="summary">
+        📥 إجمالي وارد: {format_full(total_in_all)} &nbsp;|&nbsp;
+        📤 إجمالي صادر: {format_full(total_out_all)} &nbsp;|&nbsp;
+        💰 صافي الكلي: {format_full(total_net)}
+    </div>
+    <table>
         <thead>
-            <tr>
-                <th>{headers[0]}</th>
-                <th>{headers[1]}</th>
-                <th>{headers[2]}</th>
-                <th>{headers[3]}</th>
-            </tr>
-        </thead>
+            <tr>{"".join(f'<th>{h}</th>' for h in headers)}</thead>
         <tbody>
-"""
-        for row in data_rows:
-            html += "<tr>"
-            html += f"一位{row[0]}一位"
-            html += f"一位{row[1]}一位"
-            html += f"一位{row[2]}一位"
-            html += f"一位{row[3]}一位"
-            html += "</tr>"
-        total_net = total_in_all - total_out_all
-        html += f"""
+            {table_rows}
             <tr class="total-row">
-                <td><strong>الإجمالي الكلي</strong></td>
-                <td><strong>{format_full(total_in_all)}</strong></td>
-                <td><strong>{format_full(total_out_all)}</strong></td>
-                <td><strong>{format_full(total_net)}</strong></td>
+                {('<td class="center">—</td>' if show_row_numbers else '')}
+                <td class="right"><strong>الإجمالي الكلي</strong></td>
+                <td class="center income"><strong>{format_full(total_in_all)}</strong></td>
+                <td class="center expense"><strong>{format_full(total_out_all)}</strong></td>
+                <td class="center"><strong>{format_full(total_net)}</strong></td>
             </tr>
         </tbody>
     </table>
-    <div class="footer">نظام هوى الشام للسياحة والسفر - جميع الحقوق محفوظة</div>
+    <div class="footer">{footer_text}</div>
 </body>
 </html>"""
-        fd, temp = tempfile.mkstemp(suffix='.html', prefix='hawaa_report_')
-        os.close(fd)
-        with open(temp, 'w', encoding='utf-8') as f:
-            f.write(html)
-        webbrowser.open(f'file://{temp}')
-        QMessageBox.information(self, translate('print_report'), translate('report_opened_in_browser'))
+        return html
 
+    # ------------------- باقي الدوال (التقرير المخصص) -------------------
     def show_custom_report_dialog(self):
         dialog = QDialog(self)
         dialog.setWindowTitle("تقرير مخصص لشركة")
@@ -399,18 +605,17 @@ class AccountsWidget(QWidget):
             historical_rate_col = ""
             if show_historical_rate:
                 exchange_rate = r.get('exchange_rate_to_usd', 1.0)
-                historical_rate_col = f'<td class="center">{exchange_rate:.4f}</td>'
+                historical_rate_col = f'<td class="center">{exchange_rate:.4f}一位'
             
             table_rows += f"""
             <tr class="{row_class}">
                 <td class="center">{date_display}</td>
                 <td class="right">{notes}</td>
-                <td class="center">{incoming_str}</td>
-                <td class="center">{outgoing_str}</td>
-                <td class="center">{running_str}</td>
+                <td class="center">{incoming_str}一位
+                <td class="center">{outgoing_str}一位
+                <td class="center">{running_str}一位
                 {historical_rate_col}
-            </tr>
-"""
+             </tr>"""
         closing_balance_usd = running_usd
         closing_balance_display = currency.convert(closing_balance_usd, 'USD', display_currency)
         
@@ -418,26 +623,24 @@ class AccountsWidget(QWidget):
         if is_cumulative and opening_balance_usd != 0:
             opening_row = f"""
             <tr class="opening-row">
-                <td class="center">قبل {start_date}</td>
-                <td class="right">الرصيد الافتتاحي</td>
-                <td class="center">—</td>
-                <td class="center">—</td>
-                <td class="center">{format_full(opening_balance_display)}</td>
-                {('<td class="center">—</td>' if show_historical_rate else '')}
-            </tr>
-"""
+                <td class="center">قبل {start_date}一位
+                <td class="right">الرصيد الافتتاحي一位
+                <td class="center">—一位
+                <td class="center">—一位
+                <td class="center">{format_full(opening_balance_display)}一位
+                {('<td class="center">—一位' if show_historical_rate else '')}
+             </tr>"""
         closing_row = ""
         if is_cumulative:
             closing_row = f"""
             <tr class="closing-row">
-                <td class="center">بعد {end_date}</td>
-                <td class="right">الرصيد الختامي</td>
-                <td class="center">—</td>
-                <td class="center">—</td>
-                <td class="center">{format_full(closing_balance_display)}</td>
-                {('<td class="center">—</td>' if show_historical_rate else '')}
-            </tr>
-"""
+                <td class="center">بعد {end_date}一位
+                <td class="right">الرصيد الختامي一位
+                <td class="center">—一位
+                <td class="center">—一位
+                <td class="center">{format_full(closing_balance_display)}一位
+                {('<td class="center">—一位' if show_historical_rate else '')}
+             </tr>"""
         headers = "<th>التاريخ</th><th>ملاحظات</th><th>لنا</th><th>له</th><th>التراكمي</th>"
         if show_historical_rate:
             headers += "<th>سعر الصرف (USD)</th>"
@@ -469,8 +672,8 @@ class AccountsWidget(QWidget):
         📤 إجمالي صادر: {format_full(total_out_display)} &nbsp;|&nbsp;
         💰 صافي: {format_full(net_display)}
     </div>
-    <table>
-        <thead><tr>{headers}</tr></thead>
+    <table class="data-table">
+        <thead><tr>{headers}</thead>
         <tbody>
             {opening_row}
             {table_rows}

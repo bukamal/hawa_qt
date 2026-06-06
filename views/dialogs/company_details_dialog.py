@@ -73,7 +73,6 @@ class CompanyDetailsDialog(CenteredDialog):
         total_out_display = currency.convert(total_out_usd, 'USD', display_currency)
         net_display = currency.convert(net_usd, 'USD', display_currency)
         
-        # تخزين الإجماليات للاستخدام في الطباعة
         self.total_in_display = total_in_display
         self.total_out_display = total_out_display
         self.net_display = net_display
@@ -196,7 +195,6 @@ class CompanyDetailsDialog(CenteredDialog):
         time_str = now.strftime("%H:%M:%S")
         display_currency = self.display_currency if hasattr(self, 'display_currency') else currency.get_display_currency()
         
-        # استخدام الإجماليات المخزنة
         total_in = self.total_in_display if hasattr(self, 'total_in_display') else 0
         total_out = self.total_out_display if hasattr(self, 'total_out_display') else 0
         net = self.net_display if hasattr(self, 'net_display') else 0
@@ -231,13 +229,13 @@ class CompanyDetailsDialog(CenteredDialog):
                 <td class="center income">{self.clean_text(incoming_str)}</td>
                 <td class="center expense">{self.clean_text(outgoing_str)}</td>
                 <td class="center">{self.clean_text(running_str)}</td>
-              </tr>
-"""
+             </tr>"""
+        
         html = f"""<!DOCTYPE html>
 <html dir="rtl" lang="ar">
 <head><meta charset="UTF-8"><title>تقرير حسابات {self.clean_text(self.company_name)}</title>
 <style>
-    body {{ font-family: 'Tahoma', 'Arial', sans-serif; margin: 1.5cm; direction: rtl; background: white; }}
+    body {{ font-family: 'Tajawal', 'Segoe UI', Tahoma, Arial; margin: 1.5cm; direction: rtl; background: white; }}
     h1 {{ color: #2c3e50; text-align: center; border-bottom: 2px solid #3498db; padding-bottom: 8px; }}
     .company-info {{ text-align: center; margin-bottom: 20px; color: #2c3e50; border: 1px solid #ddd; padding: 8px; background: #f9f9f9; }}
     .summary {{ text-align: center; margin: 20px 0; font-size: 16px; font-weight: bold; background: #e9ecef; padding: 10px; border-radius: 8px; }}
@@ -265,10 +263,24 @@ class CompanyDetailsDialog(CenteredDialog):
         💰 صافي: {currency.format_amount(net, display_currency)}
     </div>
     <table class="data-table">
-        <thead><tr><th>#</th><th>{translate('date')}</th><th>{translate('notes')}</th><th>لنا</th><th>له</th><th>{translate('cumulative')}</th></tr></thead>
-        <tbody>{table_rows}</tbody>
-     </table>
-    <div class="footer">نظام هوى الشام للسياحة والسفر<br>{self.clean_text(date_str)} - {self.clean_text(time_str)}</div>
+        <thead>
+            <tr>
+                <th>#</th>
+                <th>{translate('date')}</th>
+                <th>{translate('notes')}</th>
+                <th>لنا</th>
+                <th>له</th>
+                <th>{translate('cumulative')}</th>
+             </tr>
+        </thead>
+        <tbody>
+            {table_rows}
+        </tbody>
+    </table>
+    <div class="footer">
+        نظام هوى الشام للسياحة والسفر<br>
+        {self.clean_text(date_str)} - {self.clean_text(time_str)}
+    </div>
 </body>
 </html>"""
         return html
