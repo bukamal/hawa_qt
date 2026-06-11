@@ -1,4 +1,4 @@
-from PyQt5.QtWidgets import QFormLayout, QLineEdit, QDoubleSpinBox, QDateEdit, QTextEdit, QComboBox, QPushButton, QHBoxLayout, QVBoxLayout, QMessageBox, QLabel, QCheckBox
+from PyQt5.QtWidgets import QFormLayout, QLineEdit, QDoubleSpinBox, QDateEdit, QTextEdit, QComboBox, QPushButton, QHBoxLayout, QVBoxLayout, QMessageBox, QLabel, QCheckBox, QScrollArea, QWidget, QSizePolicy
 from PyQt5.QtCore import QDate, QSettings, Qt
 from database import ExpenseRepository
 from auth.session import UserSession
@@ -16,14 +16,28 @@ class AddEditExpenseDialog(CenteredDialog):
         self.saved_payment_due_date = None
         self.saved_message = None
         self.setWindowTitle(translate('add') if not expense else translate('edit'))
-        self.resize(550, 660)
+        # حجم عملي ومضغوط؛ المحتوى الزائد يمر عبر Scroll بدل تمديد النافذة طوليًا
+        self.resize(560, 560)
+        self.setMinimumSize(520, 500)
+        self.setMaximumHeight(620)
         self.settings = QSettings("Hawaa", "Accounting")
-        layout = QVBoxLayout(self.content_widget)
-        layout.setSpacing(16)
-        layout.setContentsMargins(20,20,20,20)
-        
+        outer_layout = QVBoxLayout(self.content_widget)
+        outer_layout.setSpacing(10)
+        outer_layout.setContentsMargins(14, 12, 14, 14)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        form_container = QWidget()
+        layout = QVBoxLayout(form_container)
+        layout.setSpacing(10)
+        layout.setContentsMargins(6, 4, 6, 4)
+
         form = QFormLayout()
         form.setLabelAlignment(Qt.AlignRight)
+        form.setVerticalSpacing(8)
+        form.setHorizontalSpacing(10)
         
         self.company_edit = QLineEdit()
         if self.predefined_company:
@@ -56,7 +70,8 @@ class AddEditExpenseDialog(CenteredDialog):
         
         self.zero_amount_notice = QLabel("يمكن حفظ مبلغ 0 كعملية بانتظار الدفع، ولن تؤثر على الأرصدة حتى إدخال مبلغ فعلي.")
         self.zero_amount_notice.setWordWrap(True)
-        self.zero_amount_notice.setStyleSheet("color: #b45309; background: #fffbeb; border: 1px solid #f59e0b; border-radius: 8px; padding: 8px;")
+        self.zero_amount_notice.setStyleSheet("color: #b45309; background: #fffbeb; border: 1px solid #f59e0b; border-radius: 8px; padding: 6px;")
+        self.zero_amount_notice.setMaximumHeight(52)
         form.addRow("", self.zero_amount_notice)
         
         self.conversion_label = QLabel()
@@ -102,20 +117,27 @@ class AddEditExpenseDialog(CenteredDialog):
         form.addRow("ملاحظة التنبيه:", self.payment_note_edit)
         
         self.notes_edit = QTextEdit()
+        self.notes_edit.setPlaceholderText("ملاحظات مختصرة عن العملية")
+        self.notes_edit.setFixedHeight(78)
+        self.notes_edit.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         if expense:
             self.notes_edit.setPlainText(expense['notes'] or '')
         form.addRow(translate('notes')+":", self.notes_edit)
-        
+
         layout.addLayout(form)
-        
+        layout.addStretch(1)
+        scroll.setWidget(form_container)
+        outer_layout.addWidget(scroll)
+
         btns = QHBoxLayout()
+        btns.setSpacing(8)
         save_btn = QPushButton(translate('save'))
         save_btn.clicked.connect(self.save)
         cancel_btn = QPushButton(translate('cancel'))
         cancel_btn.clicked.connect(self.reject)
         btns.addWidget(save_btn)
         btns.addWidget(cancel_btn)
-        layout.addLayout(btns)
+        outer_layout.addLayout(btns)
         
         self.amount_spin.valueChanged.connect(self.update_labels)
         self.amount_spin.valueChanged.connect(self.update_payment_fields_visibility)
