@@ -2,7 +2,7 @@ from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLineEdit, QHeaderView,
     QMessageBox, QComboBox, QDateEdit, QLabel, QDialog, QFormLayout,
     QDialogButtonBox, QRadioButton, QButtonGroup, QCheckBox, QGroupBox,
-    QSpinBox
+    QSpinBox, QListWidget, QAbstractItemView
 )
 from PyQt5.QtCore import Qt, QDate, pyqtSignal, QUrl
 from PyQt5.QtGui import QDesktopServices
@@ -547,10 +547,11 @@ class AccountsWidget(QWidget):
 
     # ------------------- باقي الدوال (التقرير المخصص) -------------------
     def show_custom_report_dialog(self):
+        """نافذة موحدة لتقرير مخصص: شركة واحدة أو عدة شركات مع نفس خيارات الطباعة."""
         dialog = QDialog(self)
-        dialog.setWindowTitle("تقرير مخصص لشركة")
+        dialog.setWindowTitle("تقرير مخصص للشركات")
         dialog.setLayoutDirection(Qt.RightToLeft)
-        dialog.resize(500, 400)
+        dialog.resize(560, 560)
         layout = QVBoxLayout(dialog)
 
         form = QFormLayout()
@@ -558,9 +559,28 @@ class AccountsWidget(QWidget):
         repo = ExpenseRepository()
         expenses = repo.get_all(convert_to_display=False)
         companies = sorted(set(e['company_name'] for e in expenses))
-        self.company_combo = QComboBox()
-        self.company_combo.addItems(companies)
-        form.addRow("الشركة:", self.company_combo)
+        if not companies:
+            QMessageBox.warning(self, translate('warning'), translate('no_data_for_print'))
+            return
+
+        self.all_companies_check = QCheckBox("طباعة لكل الشركات")
+        self.company_list = QListWidget()
+        self.company_list.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        self.company_list.setMinimumHeight(120)
+        for company in companies:
+            self.company_list.addItem(company)
+        if self.company_list.count() > 0:
+            self.company_list.item(0).setSelected(True)
+
+        def toggle_all_companies(state):
+            select_all = state == Qt.Checked
+            self.company_list.setEnabled(not select_all)
+            for i in range(self.company_list.count()):
+                self.company_list.item(i).setSelected(select_all)
+
+        self.all_companies_check.stateChanged.connect(toggle_all_companies)
+        form.addRow(self.all_companies_check)
+        form.addRow("الشركات:", self.company_list)
 
         self.period_type = QComboBox()
         self.period_type.addItems(["شهر محدد", "سنة محددة", "فترة مخصصة"])
@@ -590,8 +610,8 @@ class AccountsWidget(QWidget):
 
         # خيارات التقرير
         self.report_type_group = QButtonGroup()
-        self.radio_period = QRadioButton("تقرير فترة (Period)")
-        self.radio_cumulative = QRadioButton("تقرير تراكمي (Cumulative)")
+        self.radio_period = QRadioButton("تقرير فترة")
+        self.radio_cumulative = QRadioButton("تقرير تراكمي")
         self.radio_period.setChecked(True)
         self.report_type_group.addButton(self.radio_period)
         self.report_type_group.addButton(self.radio_cumulative)
@@ -609,10 +629,17 @@ class AccountsWidget(QWidget):
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         buttons.accepted.connect(lambda: self.generate_company_report(dialog))
         buttons.rejected.connect(dialog.reject)
+        buttons.button(QDialogButtonBox.Ok).setText("التالي: خيارات الطباعة")
+        buttons.button(QDialogButtonBox.Cancel).setText("إلغاء")
         layout.addWidget(buttons)
 
         self.on_period_type_changed()
         dialog.exec()
+
+    def _selected_custom_report_companies(self):
+        if getattr(self, 'all_companies_check', None) and self.all_companies_check.isChecked():
+            return [self.company_list.item(i).text() for i in range(self.company_list.count())]
+        return [item.text() for item in self.company_list.selectedItems()]
 
     def on_period_type_changed(self):
         period = self.period_type.currentIndex()
@@ -651,168 +678,281 @@ class AccountsWidget(QWidget):
         return to_decimal(record.get('amount_original', record.get('amount', 0)))
 
     @staticmethod
-    def _original_amount_label(record):
-        """Format debit/credit columns using the entry's original currency only."""
-        amount_original = record.get('amount_original', record.get('amount', 0))
-        currency_original = record.get('currency_original') or record.get('currency') or 'USD'
-        return currency.format_amount(to_decimal(amount_original), currency_original)
+    def _format_original_entry_amount(record):
+        original_currency = record.get('currency_original') or currency.get_display_currency()
+        return currency.format_amount(
+            to_decimal(record.get('amount_original', record.get('amount', 0))),
+            original_currency
+        )
+
+    def _company_report_math(self, active_records, opening_records, display_currency, is_cumulative):
+        """حساب ملخص شركة واحدة مع احترام قاعدة العملة الأصلية/عملة العرض."""
+        scope_records = active_records + (opening_records if is_cumulative else [])
+        original_currency = self._single_original_currency(scope_records)
+        use_original_running = bool(original_currency and original_currency == display_currency)
+
+        if use_original_running:
+            total_in = sum((self._original_amount(r) for r in active_records if r['type'] == 'incoming'), Decimal('0'))
+            total_out = sum((self._original_amount(r) for r in active_records if r['type'] == 'outgoing'), Decimal('0'))
+            opening = Decimal('0')
+            if is_cumulative:
+                opening = sum((self._original_amount(r) if r['type'] == 'incoming' else -self._original_amount(r)
+                               for r in opening_records), Decimal('0'))
+            row_balance_currency = display_currency
+        else:
+            total_in_usd = sum((base_amount(r) for r in active_records if r['type'] == 'incoming'), Decimal('0'))
+            total_out_usd = sum((base_amount(r) for r in active_records if r['type'] == 'outgoing'), Decimal('0'))
+            total_in = currency.convert(total_in_usd, 'USD', display_currency)
+            total_out = currency.convert(total_out_usd, 'USD', display_currency)
+            opening_usd = Decimal('0')
+            if is_cumulative:
+                opening_usd = sum((base_amount(r) if r['type'] == 'incoming' else -base_amount(r)
+                                   for r in opening_records), Decimal('0'))
+            opening = currency.convert(opening_usd, 'USD', display_currency)
+            row_balance_currency = 'USD'
+
+        return {
+            'use_original_running': use_original_running,
+            'total_in': total_in,
+            'total_out': total_out,
+            'net': total_in - total_out,
+            'opening': opening,
+            'row_balance_currency': row_balance_currency,
+        }
 
     def generate_company_report(self, dialog):
-        company = self.company_combo.currentText()
+        selected_companies = self._selected_custom_report_companies()
+        if not selected_companies:
+            QMessageBox.warning(self, "تنبيه", "اختر شركة واحدة على الأقل للطباعة")
+            return
+
         start_date, end_date = self.get_date_range()
         is_cumulative = self.radio_cumulative.isChecked()
         show_historical_rate = self.show_historical_rate_check.isChecked()
 
         repo = ExpenseRepository()
-        all_records = repo.get_by_company(company, convert_to_display=False)
-        all_records.sort(key=lambda x: x['date'])
-        
-        period_records = [r for r in all_records if start_date <= r['date'] <= end_date]
-        if not period_records:
-            QMessageBox.warning(self, "تنبيه", "لا توجد بيانات لهذه الشركة خلال الفترة المحددة")
+        report_data = []
+        for company in selected_companies:
+            all_records = repo.get_by_company(company, convert_to_display=False)
+            all_records.sort(key=lambda x: (x['date'], x.get('id', 0)))
+            period_records = [r for r in all_records if start_date <= r['date'] <= end_date]
+            active_period_records = self._approved_non_waiting(period_records)
+            opening_records = [r for r in all_records if r['date'] < start_date and r.get('status', 'approved') == 'approved']
+            if active_period_records or (is_cumulative and opening_records):
+                report_data.append({
+                    'company': company,
+                    'period_records': period_records,
+                    'active_period_records': active_period_records,
+                    'opening_records': opening_records,
+                })
+
+        if not report_data:
+            QMessageBox.warning(self, "تنبيه", "لا توجد بيانات للشركات المحددة خلال الفترة المحددة")
             return
+
+        print_dialog = PrintOptionsDialog(self)
+        print_dialog.setWindowTitle("خيارات طباعة التقرير المخصص")
+        if print_dialog.exec() != QDialog.Accepted:
+            return
+        settings = print_dialog.get_settings()
         dialog.accept()
 
-        default_display_currency = currency.get_display_currency()
-        active_period_records = self._approved_non_waiting(period_records)
-        opening_records = [r for r in all_records if r['date'] < start_date and r.get('status', 'approved') == 'approved']
-        currency_scope_records = active_period_records + (opening_records if is_cumulative else [])
-        original_currency = self._single_original_currency(currency_scope_records)
-        use_original_running = bool(original_currency and original_currency == default_display_currency)
-        display_currency = default_display_currency
+        display_currency = currency.get_display_currency()
         decimals = currency.get_currency_decimals()
         symbol = currency.get_currency_symbol(display_currency)
-        
+
         def format_full(amount):
             return f"{to_decimal(amount):,.{decimals}f} {symbol}"
 
-        if use_original_running:
-            total_in_display = sum((self._original_amount(r) for r in active_period_records if r['type'] == 'incoming'), Decimal('0'))
-            total_out_display = sum((self._original_amount(r) for r in active_period_records if r['type'] == 'outgoing'), Decimal('0'))
-            net_display = total_in_display - total_out_display
-            opening_balance = Decimal('0')
+        show_row_numbers = settings.get('show_row_numbers', True)
+        colorize_rows = settings.get('colorize_rows', True)
+        colorize_numbers = settings.get('colorize_numbers', True)
+        font_size = settings.get('font_size', 10)
+        show_datetime = settings.get('show_datetime', True)
+        show_printed_by = settings.get('show_printed_by', True)
+        footer_note = settings.get('footer_note', '')
+        custom_title = settings.get('custom_title', '')
+        show_company_name = settings.get('show_company_name', True)
+        show_address = settings.get('show_address', True)
+        show_logo = settings.get('show_logo', True)
+
+        total_in_all_usd = Decimal('0')
+        total_out_all_usd = Decimal('0')
+        sections_html = ""
+
+        for company_index, block in enumerate(report_data, start=1):
+            company = block['company']
+            active_records = block['active_period_records']
+            opening_records = block['opening_records']
+            period_records = block['period_records']
+            math = self._company_report_math(active_records, opening_records, display_currency, is_cumulative)
+
+            total_in_all_usd += sum((base_amount(r) for r in active_records if r['type'] == 'incoming'), Decimal('0'))
+            total_out_all_usd += sum((base_amount(r) for r in active_records if r['type'] == 'outgoing'), Decimal('0'))
+
+            running_balance = math['opening']
+            row_number = 1
+            table_rows = ""
+
+            opening_row = ""
+            if is_cumulative and math['opening'] != 0:
+                num_col = '<td class="center">—</td>' if show_row_numbers else ''
+                opening_row = f"""
+                <tr class="opening-row">
+                    {num_col}
+                    <td class="center">قبل {start_date}</td>
+                    <td class="right">الرصيد الافتتاحي</td>
+                    <td class="center">—</td>
+                    <td class="center">—</td>
+                    <td class="center">{format_full(math['opening'])}</td>
+                    {('<td class="center">—</td>' if show_historical_rate else '')}
+                </tr>"""
+
+            for r in period_records:
+                # حقلا لنا/له: المبلغ الأصلي بعملة القيد، لا يتأثر بعملة العرض.
+                amount_str = self._format_original_entry_amount(r)
+                notes = self.clean_text(r.get('notes') or '—')
+                date_display = self.clean_text(r['date'])
+                is_approved = r.get('status', 'approved') == 'approved'
+                row_class = "income-row" if r['type'] == 'incoming' else "expense-row"
+                if not is_approved:
+                    row_class = "waiting-row"
+
+                if r['type'] == 'incoming':
+                    incoming_str = amount_str
+                    outgoing_str = "—"
+                    if is_approved:
+                        running_balance += self._original_amount(r) if math['use_original_running'] else currency.convert(base_amount(r), 'USD', display_currency)
+                else:
+                    incoming_str = "—"
+                    outgoing_str = amount_str
+                    if is_approved:
+                        running_balance -= self._original_amount(r) if math['use_original_running'] else currency.convert(base_amount(r), 'USD', display_currency)
+
+                running_str = format_full(running_balance)
+                num_col = f'<td class="center">{row_number}</td>' if show_row_numbers else ''
+                row_number += 1
+                historical_rate_col = ""
+                if show_historical_rate:
+                    exchange_rate = to_decimal(r.get('exchange_rate_to_usd', 1))
+                    historical_rate_col = f'<td class="center">{exchange_rate}</td>'
+
+                table_rows += f"""
+                <tr class="{row_class if colorize_rows else ''}">
+                    {num_col}
+                    <td class="center">{date_display}</td>
+                    <td class="right">{notes}</td>
+                    <td class="center income">{self.clean_text(incoming_str)}</td>
+                    <td class="center expense">{self.clean_text(outgoing_str)}</td>
+                    <td class="center">{self.clean_text(running_str)}</td>
+                    {historical_rate_col}
+                </tr>"""
+
+            closing_row = ""
             if is_cumulative:
-                opening_balance = sum((self._original_amount(r) if r['type'] == 'incoming' else -self._original_amount(r) for r in opening_records), Decimal('0'))
-            opening_balance_display = opening_balance
-        else:
-            total_in_usd = sum((base_amount(r) for r in active_period_records if r['type'] == 'incoming'), Decimal('0'))
-            total_out_usd = sum((base_amount(r) for r in active_period_records if r['type'] == 'outgoing'), Decimal('0'))
-            net_usd = total_in_usd - total_out_usd
-            total_in_display = currency.convert(total_in_usd, 'USD', display_currency)
-            total_out_display = currency.convert(total_out_usd, 'USD', display_currency)
-            net_display = currency.convert(net_usd, 'USD', display_currency)
-            opening_balance = Decimal('0')
-            if is_cumulative:
-                opening_balance = sum((base_amount(r) if r['type'] == 'incoming' else -base_amount(r) for r in opening_records), Decimal('0'))
-            opening_balance_display = currency.convert(opening_balance, 'USD', display_currency)
-        
-        table_rows = ""
-        running_balance = opening_balance
-        for r in period_records:
-            # حقلا لنا/له يعرضان دائماً المبلغ الأصلي بعملة القيد وقت الإدخال،
-            # ولا يتأثران بعملة العرض العامة.
-            amount_str = self._original_amount_label(r)
-            notes = r['notes'] or '—'
-            date_display = r['date']
-            if r['type'] == 'incoming':
-                incoming_str = amount_str
-                outgoing_str = "—"
-                running_balance += self._original_amount(r) if use_original_running else base_amount(r)
-            else:
-                incoming_str = "—"
-                outgoing_str = amount_str
-                running_balance -= self._original_amount(r) if use_original_running else base_amount(r)
-            running_display = running_balance if use_original_running else currency.convert(running_balance, 'USD', display_currency)
-            running_str = format_full(running_display)
-            row_class = "income-row" if r['type'] == 'incoming' else "expense-row"
-            
-            # ✅ تصحيح: استخدام </td> بدلاً من الحرف الصيني "一位"
-            historical_rate_col = ""
+                num_col = '<td class="center">—</td>' if show_row_numbers else ''
+                closing_row = f"""
+                <tr class="closing-row">
+                    {num_col}
+                    <td class="center">بعد {end_date}</td>
+                    <td class="right">الرصيد الختامي</td>
+                    <td class="center">—</td>
+                    <td class="center">—</td>
+                    <td class="center">{format_full(running_balance)}</td>
+                    {('<td class="center">—</td>' if show_historical_rate else '')}
+                </tr>"""
+
+            headers = []
+            if show_row_numbers:
+                headers.append('#')
+            headers.extend(['التاريخ', 'ملاحظات', 'لنا', 'له', 'التراكمي'])
             if show_historical_rate:
-                exchange_rate = to_decimal(r.get('exchange_rate_to_usd', 1))
-                historical_rate_col = f'<td class="center">{exchange_rate:,.4f}</td>'
-            
-            # ✅ تصحيح: إغلاق كل خلية بـ </tr> وإغلاق الصف بـ </tr>
-            table_rows += f"""
-            <tr class="{row_class}">
-                <td class="center">{date_display}</td>
-                <td class="right">{notes}</td>
-                <td class="center">{incoming_str}</td>
-                <td class="center">{outgoing_str}</td>
-                <td class="center">{running_str}</td>
-                {historical_rate_col}
-            </tr>"""
-        
-        closing_balance = running_balance
-        closing_balance_display = closing_balance if use_original_running else currency.convert(closing_balance, 'USD', display_currency)
-        
-        # ✅ تصحيح: إغلاق الخلايا بـ <table> بدلاً من "一位"
-        opening_row = ""
-        if is_cumulative and opening_balance != 0:
-            opening_row = f"""
-            <tr class="opening-row">
-                <td class="center">قبل {start_date}</td>
-                <td class="right">الرصيد الافتتاحي</td>
-                <td class="center">—</td>
-                <td class="center">—</td>
-                <td class="center">{format_full(opening_balance_display)}</td>
-                {('<td class="center">—</td>' if show_historical_rate else '')}
-            </tr>"""
-        
-        closing_row = ""
-        if is_cumulative:
-            closing_row = f"""
-            <tr class="closing-row">
-                <td class="center">بعد {end_date}</td>
-                <td class="right">الرصيد الختامي</td>
-                <td class="center">—</td>
-                <td class="center">—</td>
-                <td class="center">{format_full(closing_balance_display)}</td>
-                {('<td class="center">—</td>' if show_historical_rate else '')}
-            </tr>"""
-        
-        headers = "<th>التاريخ</th><th>ملاحظات</th><th>لنا</th><th>له</th><th>التراكمي</th>"
-        if show_historical_rate:
-            headers += "<th>سعر الصرف (USD)</th>"
-        
+                headers.append('سعر الصرف (USD)')
+
+            page_break = ' page-break-before: always;' if company_index > 1 else ''
+            sections_html += f"""
+            <section class="company-section" style="{page_break}">
+                <h2>شركة: {self.clean_text(company)}</h2>
+                <div class="company-summary">
+                    📥 إجمالي وارد: {self.clean_text(format_full(math['total_in']))} &nbsp;|&nbsp;
+                    📤 إجمالي صادر: {self.clean_text(format_full(math['total_out']))} &nbsp;|&nbsp;
+                    💰 صافي: {self.clean_text(format_full(math['net']))}
+                </div>
+                <table class="data-table">
+                    <thead><tr>{''.join(f'<th>{h}</th>' for h in headers)}</tr></thead>
+                    <tbody>
+                        {opening_row}
+                        {table_rows}
+                        {closing_row}
+                    </tbody>
+                </table>
+            </section>"""
+
+        total_in_display = currency.convert(total_in_all_usd, 'USD', display_currency)
+        total_out_display = currency.convert(total_out_all_usd, 'USD', display_currency)
+        total_net_display = total_in_display - total_out_display
+
+        company_info = get_company_info()
+        header_html = ""
+        if show_company_name:
+            header_html += f"<strong>{self.clean_text(company_info.get('name', 'هوى الشام للسياحة والسفر'))}</strong><br>"
+        if show_address:
+            header_html += f"{self.clean_text(company_info.get('address', ''))} | 📞 {self.clean_text(company_info.get('phone', ''))} | ✉️ {self.clean_text(company_info.get('email', ''))}<br>"
+        if show_logo and company_info.get('logo_path') and os.path.exists(company_info['logo_path']):
+            # يمكن إضافة تضمين الشعار لاحقًا عند توحيد أصول الطباعة.
+            pass
+
+        footer_text = ""
+        if show_printed_by:
+            user = UserSession.get_current()
+            footer_text += f"طبع بواسطة: {self.clean_text(user.get('username', ''))} | "
+        if show_datetime:
+            footer_text += f"تاريخ الطباعة: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+        if footer_note:
+            footer_text += f"<br>{self.clean_text(footer_note)}"
+
+        report_title = "تقرير مخصص للشركات" if len(selected_companies) > 1 else f"تقرير حسابات شركة: {selected_companies[0]}"
+        if custom_title:
+            report_title += f" - {self.clean_text(custom_title)}"
+
         html = f"""<!DOCTYPE html>
 <html dir="rtl" lang="ar">
-<head><meta charset="UTF-8"><title>تقرير شركة {company}</title>
+<head>
+<meta charset="UTF-8">
+<title>{self.clean_text(report_title)}</title>
 <style>
-    body {{ font-family: 'Tajawal', 'Segoe UI', Tahoma, Arial; margin: 1.5cm; direction: rtl; background: white; }}
-    h1 {{ color: #2c3e50; text-align: center; border-bottom: 2px solid #3498db; }}
-    .period-info {{ text-align: center; margin-bottom: 20px; }}
-    .summary {{ text-align: center; margin: 20px 0; font-size: 16px; font-weight: bold; background: #e9ecef; padding: 10px; border-radius: 8px; }}
-    table {{ width: 100%; border-collapse: collapse; margin-top: 20px; }}
-    th, td {{ border: 1px solid #ccc; padding: 8px; }}
-    th {{ background: #2c3e50; color: white; }}
+    body {{ font-family: 'Tajawal', 'Segoe UI', Tahoma, Arial; margin: 1.5cm; direction: rtl; background: white; font-size: {font_size}pt; }}
+    h1 {{ color: #2c3e50; text-align: center; border-bottom: 2px solid #3498db; padding-bottom: 8px; }}
+    h2 {{ color: #2c3e50; margin-top: 24px; border-right: 4px solid #3498db; padding-right: 8px; }}
+    .company-info {{ text-align: center; margin-bottom: 18px; color: #2c3e50; border: 1px solid #ddd; padding: 8px; background: #f9f9f9; }}
+    .period-info {{ text-align: center; margin-bottom: 12px; }}
+    .summary, .company-summary {{ text-align: center; margin: 16px 0; font-size: 15px; font-weight: bold; background: #e9ecef; padding: 10px; border-radius: 8px; }}
+    table {{ width: 100%; border-collapse: collapse; margin-top: 14px; }}
+    th, td {{ border: 1px solid #ccc; padding: 7px; text-align: center; }}
+    th {{ background: #2c3e50; color: white; font-weight: bold; }}
     .income-row td {{ background-color: #d4edda; }}
     .expense-row td {{ background-color: #f8d7da; }}
+    .waiting-row td {{ background-color: #fff3cd; }}
     .opening-row td, .closing-row td {{ background-color: #fff3cd; font-weight: bold; }}
-    .footer {{ text-align: center; margin-top: 30px; font-size: 12px; color: gray; }}
+    .income {{ color: #28a745; font-weight: bold; }}
+    .expense {{ color: #dc3545; font-weight: bold; }}
+    .footer {{ text-align: center; margin-top: 30px; font-size: 11px; color: #6c757d; border-top: 1px solid #dee2e6; padding-top: 10px; }}
     .center {{ text-align: center; }}
     .right {{ text-align: right; }}
-    /* ✅ توسيط إجباري لجميع خلايا الجدول */
-    table td {{ text-align: center !important; }}
+    @media print {{ .company-section {{ break-inside: avoid; }} }}
 </style>
 </head>
 <body>
-    <h1>📊 تقرير حسابات شركة: {company}</h1>
+    <h1>{self.clean_text(report_title)}</h1>
+    <div class="company-info">{header_html}</div>
     <div class="period-info">الفترة: {start_date} إلى {end_date}</div>
     <div class="summary">
-        📥 إجمالي وارد: {format_full(total_in_display)} &nbsp;|&nbsp;
-        📤 إجمالي صادر: {format_full(total_out_display)} &nbsp;|&nbsp;
-        💰 صافي: {format_full(net_display)}
+        📥 الإجمالي العام الوارد: {self.clean_text(format_full(total_in_display))} &nbsp;|&nbsp;
+        📤 الإجمالي العام الصادر: {self.clean_text(format_full(total_out_display))} &nbsp;|&nbsp;
+        💰 الصافي العام: {self.clean_text(format_full(total_net_display))}
     </div>
-    <table class="data-table">
-        <thead><tr>{headers}</tr></thead>
-        <tbody>
-            {opening_row}
-            {table_rows}
-            {closing_row}
-        </tbody>
-    </table>
-    <div class="footer">نظام هوى الشام للسياحة والسفر<br>تاريخ الطباعة: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}</div>
+    {sections_html}
+    <div class="footer">{footer_text}</div>
 </body>
 </html>"""
-        self._open_html_report(html, "طباعة التقرير")
+        self._open_html_report(html, "طباعة التقرير المخصص")
