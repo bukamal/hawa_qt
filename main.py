@@ -37,24 +37,40 @@ def on_license_invalid():
     QTimer.singleShot(0, show)
 
 def run_flask_server():
+    """Start the bundled Flask server safely.
+
+    Older code used ``[sys.executable, '--server']``. Python interprets
+    ``--server`` as an interpreter option, so the subprocess exits with:
+    ``Unknown option: --server``. The script path must be passed before
+    application arguments.
+    """
     error_log = os.path.join(tempfile.gettempdir(), "hawaa_subprocess_error.log")
     try:
-        exe_path = sys.executable
-        if not os.path.exists(exe_path):
-            exe_path = sys.executable
-        cmd = [exe_path, '--server']
+        exe_path = sys.executable or "python3"
+        script_path = os.path.abspath(__file__)
+        cmd = [exe_path, script_path, '--server']
         if sys.platform == 'win32':
-            subprocess.Popen(cmd, creationflags=subprocess.CREATE_NO_WINDOW)
-        else:
-            subprocess.Popen(cmd)
+            return subprocess.Popen(cmd, creationflags=subprocess.CREATE_NO_WINDOW)
+        return subprocess.Popen(cmd)
     except Exception as e:
         with open(error_log, "w", encoding='utf-8') as f:
             f.write(str(e))
-        def show_error():
-            QMessageBox.critical(None, "خطأ في الخادم",
-                                f"فشل بدء خادم Flask.\nتم تسجيل الخطأ في:\n{error_log}")
-        QTimer.singleShot(0, show_error)
-        raise
+        logging.getLogger(__name__).exception("فشل بدء خادم Flask")
+        return None
+
+def switch_to_local_mode(settings, db_conn, reason=None, notify=True):
+    """Force the app back to local SQLite mode without closing it."""
+    settings.setValue("network/mode", "local")
+    settings.sync()
+    db_conn.mode = "local"
+    db_conn._rest_client = None
+    os.environ['HAWAA_MODE'] = 'local'
+    if notify and reason:
+        QMessageBox.warning(
+            None,
+            "العودة للوضع المحلي",
+            f"{reason}\n\nسيتم تشغيل التطبيق في الوضع المحلي باستخدام قاعدة البيانات المحلية."
+        )
 
 def wait_for_server(url, timeout=10):
     start = time.time()
@@ -165,34 +181,39 @@ def main():
     mode = db_conn.mode
     server_url = db_conn.server_url
 
-    # التحقق من تفعيل الشبكة قبل السماح بوضع عميل/خادم
+    # التحقق من تفعيل الشبكة قبل السماح بوضع عميل/خادم. عند الفشل نعود محليًا، لا نغلق التطبيق.
     if mode in ("client", "server"):
         network_ok, network_msg = check_network_activation()
         if not network_ok:
-            QMessageBox.critical(None, "تفعيل الشبكة مطلوب", 
-                                 f"{network_msg}\n\nسيتم تشغيل التطبيق في الوضع المحلي.")
+            switch_to_local_mode(settings, db_conn, network_msg)
             mode = "local"
-            settings.setValue("network/mode", "local")
-            db_conn.mode = "local"
 
     if mode == "server":
-        run_flask_server()
-        if not wait_for_server("http://localhost:8000"):
-            QMessageBox.critical(None, "خطأ", "فشل بدء الخادم الداخلي. تحقق من المنفذ 8000 أو جدار الحماية.")
-            sys.exit(1)
-        QMessageBox.information(None, "خادم", "تم بدء الخادم بنجاح. يمكن للأجهزة الأخرى الاتصال به.")
-        os.environ['HAWAA_MODE'] = 'server'
+        server_process = run_flask_server()
+        if server_process is None or not wait_for_server("http://localhost:8000"):
+            switch_to_local_mode(
+                settings,
+                db_conn,
+                "تعذر بدء الخادم الداخلي أو لم يستجب على المنفذ 8000."
+            )
+            mode = "local"
+        else:
+            QMessageBox.information(None, "خادم", "تم بدء الخادم بنجاح. يمكن للأجهزة الأخرى الاتصال به.")
+            os.environ['HAWAA_MODE'] = 'server'
     elif mode == "client":
         os.environ['HAWAA_MODE'] = 'client'
         if not test_server_connection(server_url):
-            QMessageBox.critical(None, "خطأ في الاتصال",
-                                 f"لا يمكن الاتصال بالخادم المحدد:\n{server_url}\n\n"
-                                 "سيتم فتح إعدادات الشبكة لتعديل العنوان.")
-            if open_network_settings():
-                QMessageBox.information(None, "تم الحفظ", "سيتم إعادة تشغيل التطبيق لتطبيق الإعدادات.")
-            sys.exit(0)
-    else:  # local
+            switch_to_local_mode(
+                settings,
+                db_conn,
+                f"لا يمكن الاتصال بالخادم المحدد:\n{server_url}"
+            )
+            mode = "local"
+
+    if mode == "local":
         os.environ['HAWAA_MODE'] = 'local'
+        db_conn.mode = "local"
+        db_conn._rest_client = None
 
     ThemeManager.init_app(app)
 
