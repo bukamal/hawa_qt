@@ -4,14 +4,23 @@ import sqlite3
 import os
 import sys
 import datetime
+import logging
 from functools import wraps
 from flask import Flask, request, jsonify, g
 from flask_jwt_extended import JWTManager, create_access_token, jwt_required, get_jwt_identity, get_jwt
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
+from app_config import get_db_path, get_jwt_secret, is_default_jwt_secret
+from logging_config import setup_logging
+from money import quantize_money, decimal_to_storage, rate_to_storage
+
+setup_logging()
+logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
-app.config['JWT_SECRET_KEY'] = os.environ.get('JWT_SECRET', 'hawaa-secret-key-change-me')
+app.config['JWT_SECRET_KEY'] = get_jwt_secret()
+if is_default_jwt_secret(app.config['JWT_SECRET_KEY']):
+    logger.warning('Using development JWT secret. Set HAWAA_JWT_SECRET before using network/server mode.')
 app.config['JWT_ACCESS_TOKEN_EXPIRES'] = datetime.timedelta(hours=8)
 app.config['JWT_BLACKLIST_ENABLED'] = True
 app.config['JWT_BLACKLIST_TOKEN_CHECKS'] = ['access']
@@ -25,16 +34,7 @@ limiter = Limiter(
     storage_uri="memory://",
 )
 
-def get_local_db_path():
-    if os.name == 'nt':
-        appdata = os.environ.get('APPDATA', os.path.expanduser('~\\AppData\\Roaming'))
-        data_dir = os.path.join(appdata, 'Hawaa')
-    else:
-        data_dir = os.path.expanduser('~/.hawaa')
-    os.makedirs(data_dir, exist_ok=True)
-    return os.path.join(data_dir, 'hawaa_data.db')
-
-DB_PATH = get_local_db_path()
+DB_PATH = get_db_path()
 
 def init_db():
     from database.migrations import ensure_db
@@ -162,14 +162,17 @@ def add_expense():
     cursor = conn.execute('''
         INSERT INTO expenses
         (company_name, amount, type, date, notes, currency, created_by, created_at, updated_by, updated_at,
-         amount_original, currency_original, exchange_rate_to_usd)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         amount_original, currency_original, exchange_rate_to_usd, status, payment_due_date, payment_reminder_note)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ''', (
-        data['company_name'], data['amount'], data['type'], data['date'],
+        data['company_name'], decimal_to_storage(data['amount']), data['type'], data['date'],
         data.get('notes', ''), data['currency'], user_id, now, user_id, now,
-        data.get('amount_original', data['amount']),
+        decimal_to_storage(data.get('amount_original', data['amount'])),
         data.get('currency_original', data['currency']),
-        data.get('exchange_rate_to_usd', 1.0)
+        rate_to_storage(data.get('exchange_rate_to_usd', 1.0)),
+        data.get('status', 'approved'),
+        data.get('payment_due_date'),
+        data.get('payment_reminder_note')
     ))
     conn.commit()
     new_id = cursor.lastrowid
@@ -187,14 +190,18 @@ def update_expense(expense_id):
     conn.execute('''
         UPDATE expenses SET
             company_name=?, amount=?, type=?, date=?, notes=?, currency=?,
-            updated_by=?, updated_at=?, amount_original=?, currency_original=?, exchange_rate_to_usd=?
+            updated_by=?, updated_at=?, amount_original=?, currency_original=?, exchange_rate_to_usd=?,
+            status=?, payment_due_date=?, payment_reminder_note=?
         WHERE id=?
     ''', (
-        data['company_name'], data['amount'], data['type'], data['date'],
+        data['company_name'], decimal_to_storage(data['amount']), data['type'], data['date'],
         data.get('notes', ''), data['currency'], user_id, now,
-        data.get('amount_original', data['amount']),
+        decimal_to_storage(data.get('amount_original', data['amount'])),
         data.get('currency_original', data['currency']),
-        data.get('exchange_rate_to_usd', 1.0),
+        rate_to_storage(data.get('exchange_rate_to_usd', 1.0)),
+        data.get('status', 'approved'),
+        data.get('payment_due_date'),
+        data.get('payment_reminder_note'),
         expense_id
     ))
     conn.commit()
@@ -347,7 +354,7 @@ def update_exchange_rate(currency_code):
     now = datetime.datetime.now().isoformat()
     conn = get_db()
     conn.execute('INSERT OR REPLACE INTO exchange_rates (currency_code, rate_to_usd, updated_at) VALUES (?, ?, ?)',
-                 (currency_code, rate_to_usd, now))
+                 (currency_code, rate_to_storage(rate_to_usd), now))
     conn.commit()
     log_audit('تحديث سعر صرف', 'exchange_rates', 0, f'{currency_code} = {rate_to_usd}', request)
     return jsonify({'status': 'ok'})

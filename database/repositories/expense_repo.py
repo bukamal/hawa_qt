@@ -3,7 +3,13 @@ from database.repositories.base_repo import BaseRepository
 from auth.session import UserSession
 from currency import currency
 import datetime
+from decimal import Decimal
 from typing import List, Dict
+from money import convert_to_usd, decimal_to_storage, quantize_money, to_decimal, rate_to_storage
+
+STATUS_APPROVED = 'approved'
+STATUS_WAITING_PAYMENT = 'waiting_payment'
+STATUS_CANCELLED = 'cancelled'
 
 class ExpenseRepository(BaseRepository):
     def get_all(self, convert_to_display: bool = True) -> List[Dict]:
@@ -23,17 +29,24 @@ class ExpenseRepository(BaseRepository):
                 e['currency_display'] = e.get('currency_original', e.get('currency', 'SAR'))
         return filtered
 
+    def _resolve_status(self, amount_dec: Decimal, status: str = None) -> str:
+        if status:
+            return status
+        return STATUS_WAITING_PAYMENT if amount_dec == Decimal('0.00') else STATUS_APPROVED
+
     def add(self, company_name: str, amount: float, type_val: str, date: str,
-            notes: str, currency_code: str, user_id: int) -> int:
+            notes: str, currency_code: str, user_id: int, payment_due_date: str = None,
+            payment_reminder_note: str = None, status: str = None) -> int:
+        amount_dec = quantize_money(amount)
+        if amount_dec < Decimal('0.00'):
+            raise ValueError('لا يمكن حفظ مبلغ سالب')
         rate_to_usd = currency.get_rate_to_usd(currency_code)
-        if currency_code == 'USD':
-            amount_usd = amount
-        else:
-            amount_usd = amount / rate_to_usd
+        amount_usd = convert_to_usd(amount_dec, currency_code, rate_to_usd)
+        final_status = self._resolve_status(amount_dec, status)
         now = datetime.datetime.now().isoformat()
         data = {
             'company_name': company_name,
-            'amount': amount_usd,
+            'amount': decimal_to_storage(amount_usd),
             'type': type_val,
             'date': date,
             'notes': notes,
@@ -42,40 +55,46 @@ class ExpenseRepository(BaseRepository):
             'created_at': now,
             'updated_by': user_id,
             'updated_at': now,
-            'amount_original': amount,
+            'amount_original': decimal_to_storage(amount_dec),
             'currency_original': currency_code,
-            'exchange_rate_to_usd': rate_to_usd
+            'exchange_rate_to_usd': rate_to_storage(rate_to_usd),
+            'status': final_status,
+            'payment_due_date': payment_due_date if final_status == STATUS_WAITING_PAYMENT else None,
+            'payment_reminder_note': payment_reminder_note if final_status == STATUS_WAITING_PAYMENT else None,
         }
 
         if self.db.is_remote():
-            # وضع العميل: استخدم REST
             new_id = self.db.add_expense(data)
         else:
-            # وضع محلي: استخدم SQL مباشرة مع audit_data
             user = UserSession.get_current()
             audit_data = {
                 'user_id': user_id,
                 'username': user['username'] if user else '',
-                'action': "إضافة قيد",
+                'action': "إضافة قيد" if final_status == STATUS_APPROVED else "إضافة عملية بانتظار الدفع",
                 'table_name': 'expenses',
-                'record_id': None,  # سيتم تعيينه بعد الإدراج
-                'details': f"الشركة: {company_name}, المبلغ: {amount} {currency_code}"
+                'record_id': None,
+                'details': f"الشركة: {company_name}, المبلغ: {amount_dec} {currency_code}, الحالة: {final_status}"
             }
             conn = self.db.get_connection()
             cursor = conn.execute('''
                 INSERT INTO expenses
                 (company_name, amount, type, date, notes, currency, created_by, created_at, updated_by, updated_at,
-                 amount_original, currency_original, exchange_rate_to_usd)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 amount_original, currency_original, exchange_rate_to_usd, status, payment_due_date, payment_reminder_note)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
                 data['company_name'], data['amount'], data['type'], data['date'],
                 data.get('notes', ''), data['currency'], data['created_by'], data['created_at'],
                 data['updated_by'], data['updated_at'], data['amount_original'],
-                data['currency_original'], data['exchange_rate_to_usd']
+                data['currency_original'], data['exchange_rate_to_usd'], data['status'],
+                data['payment_due_date'], data['payment_reminder_note']
             ))
-            conn.commit()
             new_id = cursor.lastrowid
-            # تسجيل التدقيق مع record_id الفعلي
+            if final_status == STATUS_WAITING_PAYMENT and payment_due_date:
+                conn.execute('''
+                    INSERT INTO payment_reminders (expense_id, reminder_date, note, is_done, created_at, updated_at)
+                    VALUES (?, ?, ?, 0, ?, ?)
+                ''', (new_id, payment_due_date, payment_reminder_note or 'بانتظار إدخال الدفعة الأولى', now, now))
+            conn.commit()
             audit_data['record_id'] = new_id
             self.db._log_audit_local(
                 audit_data['user_id'], audit_data['username'], audit_data['action'],
@@ -84,25 +103,30 @@ class ExpenseRepository(BaseRepository):
         return new_id
 
     def update(self, expense_id: int, company_name: str, amount: float, type_val: str,
-               date: str, notes: str, currency_code: str, user_id: int):
+               date: str, notes: str, currency_code: str, user_id: int,
+               payment_due_date: str = None, payment_reminder_note: str = None, status: str = None):
+        amount_dec = quantize_money(amount)
+        if amount_dec < Decimal('0.00'):
+            raise ValueError('لا يمكن حفظ مبلغ سالب')
         rate_to_usd = currency.get_rate_to_usd(currency_code)
-        if currency_code == 'USD':
-            amount_usd = amount
-        else:
-            amount_usd = amount / rate_to_usd
+        amount_usd = convert_to_usd(amount_dec, currency_code, rate_to_usd)
+        final_status = self._resolve_status(amount_dec, status)
         now = datetime.datetime.now().isoformat()
         data = {
             'company_name': company_name,
-            'amount': amount_usd,
+            'amount': decimal_to_storage(amount_usd),
             'type': type_val,
             'date': date,
             'notes': notes,
             'currency': currency_code,
             'updated_by': user_id,
             'updated_at': now,
-            'amount_original': amount,
+            'amount_original': decimal_to_storage(amount_dec),
             'currency_original': currency_code,
-            'exchange_rate_to_usd': rate_to_usd
+            'exchange_rate_to_usd': rate_to_storage(rate_to_usd),
+            'status': final_status,
+            'payment_due_date': payment_due_date if final_status == STATUS_WAITING_PAYMENT else None,
+            'payment_reminder_note': payment_reminder_note if final_status == STATUS_WAITING_PAYMENT else None,
         }
 
         if self.db.is_remote():
@@ -112,23 +136,30 @@ class ExpenseRepository(BaseRepository):
             audit_data = {
                 'user_id': user_id,
                 'username': user['username'] if user else '',
-                'action': "تعديل قيد",
+                'action': "تعديل قيد" if final_status == STATUS_APPROVED else "تعديل عملية بانتظار الدفع",
                 'table_name': 'expenses',
                 'record_id': expense_id,
-                'details': f"الشركة: {company_name}, المبلغ: {amount} {currency_code}"
+                'details': f"الشركة: {company_name}, المبلغ: {amount_dec} {currency_code}, الحالة: {final_status}"
             }
             conn = self.db.get_connection()
             conn.execute('''
                 UPDATE expenses SET
                     company_name=?, amount=?, type=?, date=?, notes=?, currency=?,
-                    updated_by=?, updated_at=?, amount_original=?, currency_original=?, exchange_rate_to_usd=?
+                    updated_by=?, updated_at=?, amount_original=?, currency_original=?, exchange_rate_to_usd=?,
+                    status=?, payment_due_date=?, payment_reminder_note=?
                 WHERE id=?
             ''', (
                 data['company_name'], data['amount'], data['type'], data['date'],
                 data.get('notes', ''), data['currency'], data['updated_by'], data['updated_at'],
                 data['amount_original'], data['currency_original'], data['exchange_rate_to_usd'],
-                expense_id
+                data['status'], data['payment_due_date'], data['payment_reminder_note'], expense_id
             ))
+            conn.execute('DELETE FROM payment_reminders WHERE expense_id=?', (expense_id,))
+            if final_status == STATUS_WAITING_PAYMENT and payment_due_date:
+                conn.execute('''
+                    INSERT INTO payment_reminders (expense_id, reminder_date, note, is_done, created_at, updated_at)
+                    VALUES (?, ?, ?, 0, ?, ?)
+                ''', (expense_id, payment_due_date, payment_reminder_note or 'بانتظار إدخال الدفعة الأولى', now, now))
             conn.commit()
             self.db._log_audit_local(
                 audit_data['user_id'], audit_data['username'], audit_data['action'],
@@ -143,10 +174,10 @@ class ExpenseRepository(BaseRepository):
         if self.db.is_remote():
             self.db.delete_expense(expense_id)
         else:
-            # جلب البيانات قبل الحذف للتسجيل
             conn = self.db.get_connection()
             row = conn.execute('SELECT company_name, amount_original, currency_original FROM expenses WHERE id=?', (expense_id,)).fetchone()
             details = f"الشركة: {row['company_name']}, المبلغ: {row['amount_original']} {row['currency_original']}" if row else ""
+            conn.execute('DELETE FROM payment_reminders WHERE expense_id=?', (expense_id,))
             conn.execute('DELETE FROM expenses WHERE id=?', (expense_id,))
             conn.commit()
             user = UserSession.get_current()
@@ -155,10 +186,20 @@ class ExpenseRepository(BaseRepository):
                 'expenses', expense_id, details
             )
 
-    def get_summary(self, convert_to_display: bool = True) -> Dict:
+    def get_payment_alerts(self) -> Dict:
         expenses = self.get_all(convert_to_display=False)
-        total_in = sum(e['amount'] for e in expenses if e['type'] == 'incoming')
-        total_out = sum(e['amount'] for e in expenses if e['type'] == 'outgoing')
+        today = datetime.date.today().isoformat()
+        waiting = [e for e in expenses if e.get('status') == STATUS_WAITING_PAYMENT]
+        overdue = [e for e in waiting if e.get('payment_due_date') and e['payment_due_date'] < today]
+        due_today = [e for e in waiting if e.get('payment_due_date') == today]
+        return {'waiting': waiting, 'overdue': overdue, 'due_today': due_today}
+
+    def get_summary(self, convert_to_display: bool = True) -> Dict:
+        expenses = [e for e in self.get_all(convert_to_display=False) if e.get('status', STATUS_APPROVED) == STATUS_APPROVED]
+        total_in_dec = sum((to_decimal(e['amount']) for e in expenses if e['type'] == 'incoming'), Decimal('0'))
+        total_out_dec = sum((to_decimal(e['amount']) for e in expenses if e['type'] == 'outgoing'), Decimal('0'))
+        total_in = decimal_to_storage(total_in_dec)
+        total_out = decimal_to_storage(total_out_dec)
         companies_count = len(set(e['company_name'] for e in expenses))
         return {
             'total_incoming': total_in,

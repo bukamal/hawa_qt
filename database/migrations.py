@@ -2,13 +2,16 @@
 import sqlite3
 import os
 import datetime
+import logging
 from database.connection import DatabaseConnection, DB_PATH
 from auth.password import hash_password
+
+logger = logging.getLogger(__name__)
 
 def init_database():
     db = DatabaseConnection()
     if db.is_remote():
-        print("⚠️ وضع العميل: قاعدة البيانات على الخادم، لا حاجة لإنشاء محلي.")
+        logger.info("وضع العميل: قاعدة البيانات على الخادم، لا حاجة لإنشاء محلي.")
         return
 
     # إغلاق أي اتصال مفتوح قبل إنشاء الجداول
@@ -57,7 +60,10 @@ def init_database():
             updated_at TEXT,
             amount_original REAL NOT NULL DEFAULT 0,
             currency_original TEXT NOT NULL DEFAULT 'SAR',
-            exchange_rate_to_usd REAL NOT NULL DEFAULT 1.0
+            exchange_rate_to_usd REAL NOT NULL DEFAULT 1.0,
+            status TEXT NOT NULL DEFAULT 'approved',
+            payment_due_date TEXT,
+            payment_reminder_note TEXT
         );
 
         CREATE TABLE IF NOT EXISTS settings (
@@ -75,11 +81,26 @@ def init_database():
             jti TEXT PRIMARY KEY,
             created_at TEXT
         );
+
+        CREATE TABLE IF NOT EXISTS payment_reminders (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            expense_id INTEGER NOT NULL,
+            reminder_date TEXT NOT NULL,
+            note TEXT,
+            is_done INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT,
+            updated_at TEXT,
+            FOREIGN KEY(expense_id) REFERENCES expenses(id) ON DELETE CASCADE
+        );
     ''')
 
     cursor.executescript('''
         CREATE INDEX IF NOT EXISTS idx_expenses_company ON expenses(company_name);
         CREATE INDEX IF NOT EXISTS idx_expenses_date ON expenses(date);
+        CREATE INDEX IF NOT EXISTS idx_expenses_status ON expenses(status);
+        CREATE INDEX IF NOT EXISTS idx_expenses_payment_due_date ON expenses(payment_due_date);
+        CREATE INDEX IF NOT EXISTS idx_payment_reminders_date ON payment_reminders(reminder_date);
+        CREATE INDEX IF NOT EXISTS idx_payment_reminders_expense ON payment_reminders(expense_id);
         CREATE INDEX IF NOT EXISTS idx_audit_log_user ON audit_log(user_id);
         CREATE INDEX IF NOT EXISTS idx_audit_log_timestamp ON audit_log(timestamp);
         CREATE INDEX IF NOT EXISTS idx_audit_log_table ON audit_log(table_name);
@@ -122,7 +143,7 @@ def init_database():
 
     conn.commit()
     conn.close()
-    print(f"✅ تم تهيئة قاعدة البيانات المحلية في: {DB_PATH}")
+    logger.info("تم تهيئة قاعدة البيانات المحلية في: %s", DB_PATH)
 
 def ensure_db():
     db = DatabaseConnection()
@@ -142,6 +163,12 @@ def ensure_db():
                 cursor.execute("ALTER TABLE expenses ADD COLUMN currency_original TEXT NOT NULL DEFAULT 'SAR'")
             if 'exchange_rate_to_usd' not in columns:
                 cursor.execute("ALTER TABLE expenses ADD COLUMN exchange_rate_to_usd REAL NOT NULL DEFAULT 1.0")
+            if 'status' not in columns:
+                cursor.execute("ALTER TABLE expenses ADD COLUMN status TEXT NOT NULL DEFAULT 'approved'")
+            if 'payment_due_date' not in columns:
+                cursor.execute("ALTER TABLE expenses ADD COLUMN payment_due_date TEXT")
+            if 'payment_reminder_note' not in columns:
+                cursor.execute("ALTER TABLE expenses ADD COLUMN payment_reminder_note TEXT")
             cursor.execute("UPDATE expenses SET amount_original = amount, currency_original = currency, exchange_rate_to_usd = 1.0 WHERE amount_original = 0")
             cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='token_blacklist'")
             if not cursor.fetchone():
@@ -151,7 +178,23 @@ def ensure_db():
                         created_at TEXT
                     )
                 ''')
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS payment_reminders (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    expense_id INTEGER NOT NULL,
+                    reminder_date TEXT NOT NULL,
+                    note TEXT,
+                    is_done INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT,
+                    updated_at TEXT,
+                    FOREIGN KEY(expense_id) REFERENCES expenses(id) ON DELETE CASCADE
+                )
+            ''')
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_expenses_status ON expenses(status)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_expenses_payment_due_date ON expenses(payment_due_date)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_payment_reminders_date ON payment_reminders(reminder_date)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_payment_reminders_expense ON payment_reminders(expense_id)")
             conn.commit()
             conn.close()
         except Exception as e:
-            print(f"تحذير: تعذر تحديث قاعدة البيانات القديمة: {e}")
+            logger.warning("تعذر تحديث قاعدة البيانات القديمة: %s", e)

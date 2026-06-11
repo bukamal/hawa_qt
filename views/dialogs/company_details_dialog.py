@@ -7,6 +7,7 @@ from views.centered_dialog import CenteredDialog
 from views.custom_table_view import CustomTableView
 from models.table_models import GenericTableModel
 from views.dialogs.add_edit_expense_dialog import AddEditExpenseDialog
+from views.toast import Toast
 from currency import currency
 from datetime import datetime
 from config import get_company_info
@@ -65,8 +66,9 @@ class CompanyDetailsDialog(CenteredDialog):
         self.records = sorted(records, key=lambda x: x['date'])
         display_currency = currency.get_display_currency()
 
-        total_in_usd = sum(r['amount'] for r in self.records if r['type'] == 'incoming')
-        total_out_usd = sum(r['amount'] for r in self.records if r['type'] == 'outgoing')
+        approved_records = [r for r in self.records if r.get('status', 'approved') == 'approved']
+        total_in_usd = sum(r['amount'] for r in approved_records if r['type'] == 'incoming')
+        total_out_usd = sum(r['amount'] for r in approved_records if r['type'] == 'outgoing')
         net_usd = total_in_usd - total_out_usd
         
         total_in_display = currency.convert(total_in_usd, 'USD', display_currency)
@@ -91,7 +93,10 @@ class CompanyDetailsDialog(CenteredDialog):
             currency_original = r['currency_original']
             amount_str = f"{amount_original:,.2f} {currency_original}"
             
-            if r['type'] == 'incoming':
+            if r.get('status') == 'waiting_payment':
+                incoming_str = "⏳ بانتظار الدفع"
+                outgoing_str = "—"
+            elif r['type'] == 'incoming':
                 incoming_str = amount_str
                 outgoing_str = "—"
                 running_usd += r['amount']
@@ -110,7 +115,7 @@ class CompanyDetailsDialog(CenteredDialog):
                 'notes': r['notes'] or '',
                 'incoming': incoming_str,
                 'outgoing': outgoing_str,
-                'running': running_str
+                'running': running_str if r.get('status') != 'waiting_payment' else ('موعد التنبيه: ' + (r.get('payment_due_date') or 'غير محدد'))
             })
         
         headers = ['serial', 'date', 'notes', 'incoming', 'outgoing', 'running']
@@ -132,6 +137,8 @@ class CompanyDetailsDialog(CenteredDialog):
             self.refresh()
             if self.parent() and hasattr(self.parent(), 'refresh_table'):
                 self.parent().refresh_table()
+            if getattr(dialog, 'saved_status', None) == 'waiting_payment':
+                Toast(self, f"📝 تم حفظ العملية بانتظار الدفع\nموعد التنبيه: {dialog.saved_payment_due_date}", 'warning')
 
     def edit_record(self):
         if UserSession.get_current().get('role') == 'viewer':
@@ -154,6 +161,8 @@ class CompanyDetailsDialog(CenteredDialog):
                 self.refresh()
                 if self.parent() and hasattr(self.parent(), 'refresh_table'):
                     self.parent().refresh_table()
+                if getattr(dialog, 'saved_status', None) == 'waiting_payment':
+                    Toast(self, f"📝 تم حفظ العملية بانتظار الدفع\nموعد التنبيه: {dialog.saved_payment_due_date}", 'warning')
 
     def delete_record(self):
         if UserSession.get_current().get('role') == 'viewer':
@@ -208,7 +217,10 @@ class CompanyDetailsDialog(CenteredDialog):
             notes = self.clean_text(r['notes'] or '—')
             date_display = r['date']
             
-            if r['type'] == 'incoming':
+            if r.get('status') == 'waiting_payment':
+                incoming_str = "⏳ بانتظار الدفع"
+                outgoing_str = "—"
+            elif r['type'] == 'incoming':
                 incoming_str = amount_str
                 outgoing_str = "—"
                 running_usd += r['amount']

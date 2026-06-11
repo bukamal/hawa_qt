@@ -2,6 +2,8 @@
 from database.repositories.settings_repo import SettingsRepository
 from database.connection import DatabaseConnection
 import datetime
+from decimal import Decimal
+from money import to_decimal, quantize_money, decimal_to_storage, rate_to_storage
 
 class CurrencyManager:
     _instance = None
@@ -37,37 +39,38 @@ class CurrencyManager:
     def abbreviate_numbers(self) -> bool:
         return self._settings_repo.get('abbreviate_numbers', 'false').lower() == 'true'
     
-    def get_rate_to_usd(self, currency_code: str) -> float:
+    def get_rate_to_usd(self, currency_code: str) -> Decimal:
         if currency_code == 'USD':
-            return 1.0
+            return Decimal('1')
         db = DatabaseConnection()
         if db.is_remote():
             rates = db.get_all_currencies()
             for r in rates:
                 if r['currency_code'] == currency_code:
-                    return r['rate_to_usd']
-            return 1.0
+                    return to_decimal(r['rate_to_usd'], Decimal('1'))
+            return Decimal('1')
         else:
             conn = db.get_connection()
             cursor = conn.execute("SELECT rate_to_usd FROM exchange_rates WHERE currency_code=?", (currency_code,))
             row = cursor.fetchone()
             if row:
-                return row[0]
-            return 1.0
+                return to_decimal(row[0], Decimal('1'))
+            return Decimal('1')
     
     def update_rate(self, currency_code: str, rate_to_usd: float):
         db = DatabaseConnection()
-        db.update_exchange_rate(currency_code, rate_to_usd)
+        db.update_exchange_rate(currency_code, rate_to_storage(rate_to_usd))
     
-    def convert(self, amount: float, from_currency: str, to_currency: str) -> float:
+    def convert(self, amount: float, from_currency: str, to_currency: str) -> Decimal:
+        amount_dec = quantize_money(amount)
         if from_currency == to_currency:
-            return amount
+            return amount_dec
         rate_from = self.get_rate_to_usd(from_currency)
         rate_to = self.get_rate_to_usd(to_currency)
         if rate_from == 0 or rate_to == 0:
-            return amount
-        amount_usd = amount / rate_from
-        return amount_usd * rate_to
+            return amount_dec
+        amount_usd = amount_dec / rate_from
+        return quantize_money(amount_usd * rate_to)
     
     def _abbreviate_number(self, num: float) -> str:
         if num >= 1_000_000:
@@ -85,6 +88,7 @@ class CurrencyManager:
         symbol = self.get_currency_symbol(currency_code)
         fmt = self.get_number_format()
         abbrev = self.abbreviate_numbers()
+        amount = quantize_money(amount)
         if abbrev and abs(amount) >= 1000:
             formatted = self._abbreviate_number(amount)
         else:

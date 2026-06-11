@@ -2,19 +2,14 @@
 import sqlite3
 import threading
 import os
+import logging
 from typing import List, Dict, Optional
 from PyQt5.QtCore import QSettings
+from app_config import get_db_path, DEFAULT_SERVER_URL
 
-def get_local_db_path():
-    if os.name == 'nt':
-        appdata = os.environ.get('APPDATA', os.path.expanduser('~\\AppData\\Roaming'))
-        data_dir = os.path.join(appdata, 'Hawaa')
-    else:
-        data_dir = os.path.expanduser('~/.hawaa')
-    os.makedirs(data_dir, exist_ok=True)
-    return os.path.join(data_dir, 'hawaa_data.db')
+logger = logging.getLogger(__name__)
 
-LOCAL_DB_PATH = get_local_db_path()
+LOCAL_DB_PATH = get_db_path()
 
 class DatabaseConnection:
     _instance = None
@@ -29,7 +24,7 @@ class DatabaseConnection:
     def _init_mode(self):
         settings = QSettings("Hawaa", "Accounting")
         self.mode = settings.value("network/mode", "local")
-        self.server_url = settings.value("network/server_url", "http://localhost:8000")
+        self.server_url = settings.value("network/server_url", DEFAULT_SERVER_URL)
         self._rest_client = None
         if self.mode == "client":
             from database.connection_rest import RestClient
@@ -137,15 +132,18 @@ class DatabaseConnection:
         cursor = conn.execute('''
             INSERT INTO expenses
             (company_name, amount, type, date, notes, currency, created_by, created_at, updated_by, updated_at,
-             amount_original, currency_original, exchange_rate_to_usd)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             amount_original, currency_original, exchange_rate_to_usd, status, payment_due_date, payment_reminder_note)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
             data['company_name'], data['amount'], data['type'], data['date'],
             data.get('notes', ''), data['currency'], data.get('created_by', 1), now,
             data.get('updated_by', 1), now,
             data.get('amount_original', data['amount']),
             data.get('currency_original', data['currency']),
-            data.get('exchange_rate_to_usd', 1.0)
+            data.get('exchange_rate_to_usd', 1.0),
+            data.get('status', 'approved'),
+            data.get('payment_due_date'),
+            data.get('payment_reminder_note')
         ))
         conn.commit()
         return cursor.lastrowid
@@ -159,7 +157,8 @@ class DatabaseConnection:
         conn.execute('''
             UPDATE expenses SET
                 company_name=?, amount=?, type=?, date=?, notes=?, currency=?,
-                updated_by=?, updated_at=?, amount_original=?, currency_original=?, exchange_rate_to_usd=?
+                updated_by=?, updated_at=?, amount_original=?, currency_original=?, exchange_rate_to_usd=?,
+                status=?, payment_due_date=?, payment_reminder_note=?
             WHERE id=?
         ''', (
             data['company_name'], data['amount'], data['type'], data['date'],
@@ -167,6 +166,9 @@ class DatabaseConnection:
             data.get('amount_original', data['amount']),
             data.get('currency_original', data['currency']),
             data.get('exchange_rate_to_usd', 1.0),
+            data.get('status', 'approved'),
+            data.get('payment_due_date'),
+            data.get('payment_reminder_note'),
             expense_id
         ))
         conn.commit()

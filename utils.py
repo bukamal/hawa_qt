@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 from database import SettingsRepository
+import logging
 from PyQt5.QtCore import QObject, QTimer, Qt
+import logging
 from PyQt5.QtWidgets import QApplication, QLineEdit, QTextEdit, QComboBox, QDateEdit, QSpinBox, QDoubleSpinBox, QAbstractSpinBox
 import re
 
@@ -102,7 +104,7 @@ def enable_auto_select_all(app):
     manager = AutoSelectManager(app)
     # حفظ المدير في التطبيق لمنعه من التجميع
     app.auto_select_manager = manager
-    print("✅ تم تفعيل تحديد النص تلقائياً عند التركيز (باستخدام focusChanged)")
+    logging.getLogger(__name__).info("تم تفعيل تحديد النص تلقائياً عند التركيز")
 
 
 def apply_auto_select_to_widget(widget):

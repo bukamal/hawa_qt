@@ -10,6 +10,7 @@ from i18n.translator import translate
 from views.custom_table_view import CustomTableView
 from models.table_models import GenericTableModel
 from views.dialogs.add_edit_expense_dialog import AddEditExpenseDialog
+from views.toast import Toast
 from views.dialogs.company_details_dialog import CompanyDetailsDialog
 from currency import currency
 from auth.session import UserSession
@@ -163,11 +164,20 @@ class AccountsWidget(QWidget):
             QMessageBox.critical(self, "خطأ", f"فشل تحميل البيانات: {str(e)}")
             return
         search = self.search_edit.text().strip().lower()
-        groups = defaultdict(lambda: {'incoming': 0.0, 'outgoing': 0.0})
+        groups = defaultdict(lambda: {'incoming': 0.0, 'outgoing': 0.0, 'waiting_payment': 0, 'overdue': 0})
+        today = datetime.now().date().isoformat()
         for e in expenses:
             if search and search not in e['company_name'].lower():
                 continue
-            groups[e['company_name']][e['type']] += e['amount']
+            status = e.get('status', 'approved')
+            if status == 'waiting_payment':
+                groups[e['company_name']]['waiting_payment'] += 1
+                due = e.get('payment_due_date')
+                if due and due < today:
+                    groups[e['company_name']]['overdue'] += 1
+                continue
+            if status == 'approved':
+                groups[e['company_name']][e['type']] += e['amount']
 
         display_currency = currency.get_display_currency()
         data = []
@@ -180,16 +190,26 @@ class AccountsWidget(QWidget):
                 'incoming': currency.format_amount(incoming_display, display_currency),
                 'outgoing': currency.format_amount(outgoing_display, display_currency),
                 'net': currency.format_amount(net_display, display_currency),
+                'payment_status': self._format_payment_status(vals),
                 'net_raw': net_display
             })
         data.sort(key=lambda x: x['company'])
-        headers = ['company', 'incoming', 'outgoing', 'net']
-        display_headers = [translate('company_name'), translate('total_incoming'), translate('total_outgoing'), translate('net')]
-        data_keys = ['company', 'incoming', 'outgoing', 'net']
+        headers = ['company', 'incoming', 'outgoing', 'net', 'payment_status']
+        display_headers = [translate('company_name'), translate('total_incoming'), translate('total_outgoing'), translate('net'), 'تنبيهات الدفع']
+        data_keys = ['company', 'incoming', 'outgoing', 'net', 'payment_status']
         self.model = GenericTableModel(data, display_headers, key_fields=['company'], data_keys=data_keys)
         self.table.setModel(self.model)
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.table.refresh_style()
+
+    def _format_payment_status(self, vals):
+        waiting = vals.get('waiting_payment', 0)
+        overdue = vals.get('overdue', 0)
+        if overdue:
+            return f"⚠️ {overdue} متأخر / ⏳ {waiting} بانتظار الدفع"
+        if waiting:
+            return f"⏳ {waiting} بانتظار الدفع"
+        return "—"
 
     def add_record(self):
         if UserSession.get_current().get('role') == 'viewer':
@@ -199,6 +219,10 @@ class AccountsWidget(QWidget):
         if dialog.exec():
             self.refresh_table()
             self.data_changed.emit()
+            if getattr(dialog, 'saved_status', None) == 'waiting_payment':
+                Toast(self, f"📝 تم حفظ العملية بانتظار الدفع\nموعد التنبيه: {dialog.saved_payment_due_date}\nلن تؤثر على الأرصدة حتى إدخال مبلغ فعلي.", 'warning')
+            else:
+                Toast(self, "✅ تم حفظ القيد المالي بنجاح", 'success')
 
     def show_details(self, index):
         row = index.row()

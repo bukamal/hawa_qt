@@ -6,6 +6,7 @@ from i18n.translator import translate
 from views.custom_table_view import CustomTableView
 from models.table_models import GenericTableModel
 from datetime import datetime, timedelta
+from money import to_decimal
 import pyqtgraph as pg
 from pyqtgraph import PlotWidget, BarGraphItem
 
@@ -61,8 +62,12 @@ class DashboardWidget(QWidget):
         self.top_company_card = self._create_card("أعلى شركة صافي", "0")
         self.exchange_rate_card = self._create_card("سعر الصرف (1 USD)", "0")
         # لجعل البطاقتين تأخذان عرضاً متساوياً، نضيف stretch أو نضبط السياسات
+        self.waiting_payment_card = self._create_card("عمليات بانتظار الدفع", "0")
+        self.overdue_payment_card = self._create_card("دفعات متأخرة", "0")
         row3.addWidget(self.top_company_card)
         row3.addWidget(self.exchange_rate_card)
+        row3.addWidget(self.waiting_payment_card)
+        row3.addWidget(self.overdue_payment_card)
         cards_container.addLayout(row3)
         
         main_layout.addLayout(cards_container)
@@ -151,8 +156,12 @@ class DashboardWidget(QWidget):
                 continue
             filtered.append(e)
         
-        total_in_usd = sum(e['amount'] for e in filtered if e['type'] == 'incoming')
-        total_out_usd = sum(e['amount'] for e in filtered if e['type'] == 'outgoing')
+        approved_filtered = [e for e in filtered if e.get('status', 'approved') == 'approved']
+        waiting_payment = [e for e in all_expenses if e.get('status') == 'waiting_payment']
+        today_iso = datetime.now().date().isoformat()
+        overdue_payment = [e for e in waiting_payment if e.get('payment_due_date') and e['payment_due_date'] < today_iso]
+        total_in_usd = sum(e['amount'] for e in approved_filtered if e['type'] == 'incoming')
+        total_out_usd = sum(e['amount'] for e in approved_filtered if e['type'] == 'outgoing')
         net_usd = total_in_usd - total_out_usd
         
         display_currency = currency.get_display_currency()
@@ -160,19 +169,19 @@ class DashboardWidget(QWidget):
         total_out = currency.convert(total_out_usd, 'USD', display_currency)
         net = currency.convert(net_usd, 'USD', display_currency)
         
-        companies = set(e['company_name'] for e in filtered)
+        companies = set(e['company_name'] for e in approved_filtered)
         companies_count = len(companies)
         users = user_repo.get_all()
         users_count = len(users)
         
-        if filtered:
-            avg_usd = sum(e['amount'] for e in filtered) / len(filtered)
+        if approved_filtered:
+            avg_usd = sum(e['amount'] for e in approved_filtered) / len(approved_filtered)
             avg = currency.convert(avg_usd, 'USD', display_currency)
         else:
             avg = 0
         
         company_net = {}
-        for e in filtered:
+        for e in approved_filtered:
             company_net[e['company_name']] = company_net.get(e['company_name'], 0) + (e['amount'] if e['type'] == 'incoming' else -e['amount'])
         if company_net:
             top_company = max(company_net.items(), key=lambda x: x[1])
@@ -195,14 +204,17 @@ class DashboardWidget(QWidget):
         self._set_card_value(self.avg_card, currency.format_amount(avg, display_currency))
         self._set_card_value(self.top_company_card, top_text)
         self._set_card_value(self.exchange_rate_card, rate_text)
+        self._set_card_value(self.waiting_payment_card, str(len(waiting_payment)))
+        self._set_card_value(self.overdue_payment_card, str(len(overdue_payment)))
         
         # إعادة تخطيط البطاقات (للتأكد من ضبط الأحجام)
         for card in [self.incoming_card, self.outgoing_card, self.net_card,
                      self.companies_card, self.users_card, self.avg_card,
-                     self.top_company_card, self.exchange_rate_card]:
+                     self.top_company_card, self.exchange_rate_card,
+                     self.waiting_payment_card, self.overdue_payment_card]:
             card.updateGeometry()
         
-        self.plot_monthly_trend(all_expenses)
+        self.plot_monthly_trend(approved_filtered)
         
         recent = sorted(all_expenses, key=lambda x: x['id'], reverse=True)[:5]
         recent_data = []
@@ -215,16 +227,33 @@ class DashboardWidget(QWidget):
                 'date': r['date'],
                 'company': r['company_name'],
                 'amount': amount_str,
-                'type': 'لنا' if r['type'] == 'incoming' else 'له'
+                'type': self._format_record_type(r)
             })
         headers = ['date', 'company', 'amount', 'type']
-        display_headers = [translate('date'), translate('company_name'), translate('amount'), 'النوع']
+        display_headers = [translate('date'), translate('company_name'), translate('amount'), 'الحالة']
         model = GenericTableModel(recent_data, display_headers, key_fields=['id'], data_keys=headers)
         self.recent_table.setModel(model)
         self.recent_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.recent_table.setColumnHidden(0, True)
         self.recent_table.refresh_style()
     
+    def _format_record_type(self, record):
+        if record.get('status') == 'waiting_payment':
+            due = record.get('payment_due_date') or 'غير محدد'
+            return f"⏳ بانتظار الدفع ({due})"
+        return 'لنا' if record['type'] == 'incoming' else 'له'
+
+
+    def _to_plot_float(self, value):
+        """Convert Decimal/object monetary values to plain float for pyqtgraph/numpy only."""
+        try:
+            return float(to_decimal(value))
+        except Exception:
+            try:
+                return float(value)
+            except Exception:
+                return 0.0
+
     def plot_monthly_trend(self, all_expenses):
         monthly_in = {}
         monthly_out = {}
@@ -232,11 +261,11 @@ class DashboardWidget(QWidget):
             date_str = e['date']
             try:
                 month_key = date_str[:7]
-                amount_usd = e['amount']
+                amount_usd = to_decimal(e.get('amount', 0))
                 if e['type'] == 'incoming':
-                    monthly_in[month_key] = monthly_in.get(month_key, 0) + amount_usd
+                    monthly_in[month_key] = to_decimal(monthly_in.get(month_key, 0)) + amount_usd
                 else:
-                    monthly_out[month_key] = monthly_out.get(month_key, 0) + amount_usd
+                    monthly_out[month_key] = to_decimal(monthly_out.get(month_key, 0)) + amount_usd
             except:
                 continue
         
@@ -256,8 +285,8 @@ class DashboardWidget(QWidget):
             out_vals.append(monthly_out.get(m, 0))
         
         display_currency = currency.get_display_currency()
-        in_display = [currency.convert(v, 'USD', display_currency) for v in in_vals]
-        out_display = [currency.convert(v, 'USD', display_currency) for v in out_vals]
+        in_display = [self._to_plot_float(currency.convert(v, 'USD', display_currency)) for v in in_vals]
+        out_display = [self._to_plot_float(currency.convert(v, 'USD', display_currency)) for v in out_vals]
         
         self.plot_widget.clear()
         x = list(range(len(months)))

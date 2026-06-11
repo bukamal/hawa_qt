@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+import logging
 from PyQt5.QtWidgets import QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QStackedWidget, QPushButton, QLabel, QFrame, QMessageBox, QApplication
 from PyQt5.QtCore import Qt, QPoint, QPropertyAnimation, QTimer, pyqtSignal
 from PyQt5.QtGui import QIcon
@@ -16,6 +17,7 @@ from views.widgets.settings_widget import SettingsWidget
 from views.dialogs.change_password_dialog import ChangePasswordDialog
 from views.login_dialog import LoginDialog
 from views.custom_table_view import CustomTableView
+from views.toast import Toast
 
 class MainWindow(QMainWindow):
     # إضافة إشارة للتحريك
@@ -44,6 +46,26 @@ class MainWindow(QMainWindow):
         self.switch_page('accounts')
         self.start_connection_monitor()
         self.installEventFilter(self)
+        QTimer.singleShot(900, self.show_payment_alerts_on_startup)
+
+
+    def show_payment_alerts_on_startup(self):
+        try:
+            from database import ExpenseRepository
+            alerts = ExpenseRepository().get_payment_alerts()
+            waiting_count = len(alerts.get('waiting', []))
+            overdue_count = len(alerts.get('overdue', []))
+            due_today_count = len(alerts.get('due_today', []))
+            if waiting_count or overdue_count or due_today_count:
+                message = (
+                    f"🔔 تنبيهات الدفع\n"
+                    f"⏳ بانتظار الدفع: {waiting_count}\n"
+                    f"⚠️ متأخرة: {overdue_count}\n"
+                    f"📅 مستحقة اليوم: {due_today_count}"
+                )
+                Toast(self, message, 'warning', duration=7000)
+        except Exception:
+            pass
 
     def start_connection_monitor(self):
         from database.connection import DatabaseConnection
@@ -287,7 +309,7 @@ class MainWindow(QMainWindow):
                     if rest_client:
                         rest_client.logout()
                 except Exception as e:
-                    print(f"Logout error: {e}")
+                    logging.getLogger(__name__).exception("Logout error: %s", e)
             UserSession.logout()
             self.hide()
             login = LoginDialog(self)  # تمرير parent

@@ -1,7 +1,10 @@
 # -*- coding: utf-8 -*-
 import requests
 import time
+import logging
 from typing import List, Dict, Any
+
+logger = logging.getLogger(__name__)
 
 class RestClient:
     def __init__(self, server_url: str):
@@ -27,7 +30,7 @@ class RestClient:
                 # معالجة 429: انتظار أطول وإعادة المحاولة
                 if resp.status_code == 429:
                     wait_time = min(30, backoff * (4 ** attempt))
-                    print(f"⚠️ تجاوز حد الطلبات (429). إعادة المحاولة بعد {wait_time:.1f} ثانية...")
+                    logger.warning("تجاوز حد الطلبات (429). إعادة المحاولة بعد %.1f ثانية", wait_time)
                     time.sleep(wait_time)
                     continue
                 if resp.status_code >= 400:
@@ -37,7 +40,7 @@ class RestClient:
                 last_exception = e
                 if attempt < retries - 1:
                     wait_time = backoff * (2 ** attempt)
-                    print(f"⚠️ مهلة الاتصال (timeout). إعادة المحاولة {attempt+1}/{retries} بعد {wait_time:.1f} ثانية...")
+                    logger.warning("مهلة الاتصال. إعادة المحاولة %s/%s بعد %.1f ثانية", attempt+1, retries, wait_time)
                     time.sleep(wait_time)
                 else:
                     raise Exception(f"Failed after {retries} attempts: {str(e)}")

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import sys
+import logging
 import os
 import subprocess
 import time
@@ -8,6 +9,7 @@ import shutil
 import requests
 import tempfile
 import threading
+from logging_config import setup_logging
 from PyQt5.QtWidgets import QApplication, QMessageBox, QDialog, QVBoxLayout, QDialogButtonBox
 from PyQt5.QtCore import QTimer, QSettings, Qt
 from PyQt5.QtGui import QFont
@@ -84,7 +86,7 @@ def start_periodic_backup():
     from database.connection import DatabaseConnection
     db = DatabaseConnection()
     if db.is_remote():
-        print("⚠️ النسخ الاحتياطي الدوري معطل في وضع العميل")
+        logger.info("النسخ الاحتياطي الدوري معطل في وضع العميل")
         return None
 
     settings = QSettings("Hawaa", "Accounting")
@@ -141,8 +143,10 @@ def open_network_settings():
     return dialog.exec() == QDialog.Accepted
 
 def main():
+    setup_logging()
+    logger = logging.getLogger(__name__)
     if len(sys.argv) > 1 and sys.argv[1] == '--server':
-        print("تشغيل خادم هوى الشام...")
+        logger.info("تشغيل خادم هوى الشام")
         from database.migrations import ensure_db as ensure_db_remote
         ensure_db_remote()
         from waitress import serve
