@@ -9,6 +9,7 @@ from datetime import datetime, timedelta
 from money import to_decimal
 import pyqtgraph as pg
 from pyqtgraph import PlotWidget, BarGraphItem
+from money import base_amount
 
 class DashboardWidget(QWidget):
     refresh_needed = pyqtSignal()
@@ -160,8 +161,8 @@ class DashboardWidget(QWidget):
         waiting_payment = [e for e in all_expenses if e.get('status') == 'waiting_payment']
         today_iso = datetime.now().date().isoformat()
         overdue_payment = [e for e in waiting_payment if e.get('payment_due_date') and e['payment_due_date'] < today_iso]
-        total_in_usd = sum(e['amount'] for e in approved_filtered if e['type'] == 'incoming')
-        total_out_usd = sum(e['amount'] for e in approved_filtered if e['type'] == 'outgoing')
+        total_in_usd = sum(base_amount(e) for e in approved_filtered if e['type'] == 'incoming')
+        total_out_usd = sum(base_amount(e) for e in approved_filtered if e['type'] == 'outgoing')
         net_usd = total_in_usd - total_out_usd
         
         display_currency = currency.get_display_currency()
@@ -175,14 +176,14 @@ class DashboardWidget(QWidget):
         users_count = len(users)
         
         if approved_filtered:
-            avg_usd = sum(e['amount'] for e in approved_filtered) / len(approved_filtered)
+            avg_usd = sum(base_amount(e) for e in approved_filtered) / len(approved_filtered)
             avg = currency.convert(avg_usd, 'USD', display_currency)
         else:
             avg = 0
         
         company_net = {}
         for e in approved_filtered:
-            company_net[e['company_name']] = company_net.get(e['company_name'], 0) + (e['amount'] if e['type'] == 'incoming' else -e['amount'])
+            company_net[e['company_name']] = company_net.get(e['company_name'], 0) + (base_amount(e) if e['type'] == 'incoming' else -base_amount(e))
         if company_net:
             top_company = max(company_net.items(), key=lambda x: x[1])
             top_net = currency.convert(top_company[1], 'USD', display_currency)
@@ -261,7 +262,7 @@ class DashboardWidget(QWidget):
             date_str = e['date']
             try:
                 month_key = date_str[:7]
-                amount_usd = to_decimal(e.get('amount', 0))
+                amount_usd = to_decimal(base_amount(e))
                 if e['type'] == 'incoming':
                     monthly_in[month_key] = to_decimal(monthly_in.get(month_key, 0)) + amount_usd
                 else:

@@ -48,3 +48,14 @@ def convert_to_usd(amount: Any, currency_code: str, rate_to_usd: Any) -> Decimal
     if currency_code == "USD" or rate_dec == 0:
         return amount_dec
     return (amount_dec / rate_dec).quantize(MONEY_QUANT, rounding=ROUND_HALF_UP)
+
+
+def base_amount(record: dict) -> Decimal:
+    """Return canonical base-currency amount for balances and reports."""
+    if record is None:
+        return Decimal("0")
+    return to_decimal(record.get("amount_base", record.get("amount", 0)))
+
+
+def base_amount_storage(record: dict) -> float:
+    return decimal_to_storage(base_amount(record))

@@ -61,6 +61,7 @@ def init_database():
             amount_original REAL NOT NULL DEFAULT 0,
             currency_original TEXT NOT NULL DEFAULT 'SAR',
             exchange_rate_to_usd REAL NOT NULL DEFAULT 1.0,
+            amount_base REAL NOT NULL DEFAULT 0,
             status TEXT NOT NULL DEFAULT 'approved',
             payment_due_date TEXT,
             payment_reminder_note TEXT
@@ -128,7 +129,7 @@ def init_database():
     cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('company_logo_path', '')")
 
     cursor.execute("DELETE FROM schema_version")
-    cursor.execute("INSERT INTO schema_version(version) VALUES (2)")
+    cursor.execute("INSERT INTO schema_version(version) VALUES (3)")
 
     now = datetime.datetime.now().isoformat()
     default_rates = [
@@ -207,12 +208,13 @@ def _run_schema_migrations(cursor):
     current_version = _get_schema_version(cursor)
 
     if not _table_exists(cursor, "expenses"):
-        _set_schema_version(cursor, 2)
+        _set_schema_version(cursor, 3)
         return
 
     _add_column_if_missing(cursor, "expenses", "amount_original", "amount_original REAL NOT NULL DEFAULT 0")
     _add_column_if_missing(cursor, "expenses", "currency_original", "currency_original TEXT NOT NULL DEFAULT 'SAR'")
     _add_column_if_missing(cursor, "expenses", "exchange_rate_to_usd", "exchange_rate_to_usd REAL NOT NULL DEFAULT 1.0")
+    _add_column_if_missing(cursor, "expenses", "amount_base", "amount_base REAL NOT NULL DEFAULT 0")
     _add_column_if_missing(cursor, "expenses", "status", "status TEXT DEFAULT 'approved'")
     _add_column_if_missing(cursor, "expenses", "payment_due_date", "payment_due_date TEXT")
     _add_column_if_missing(cursor, "expenses", "payment_reminder_note", "payment_reminder_note TEXT")
@@ -232,6 +234,21 @@ def _run_schema_migrations(cursor):
         UPDATE expenses
         SET exchange_rate_to_usd = 1.0
         WHERE exchange_rate_to_usd IS NULL OR exchange_rate_to_usd = 0
+    """)
+    # amount_base is the canonical base amount (USD) used by balances/reports.
+    cursor.execute("""
+        UPDATE expenses
+        SET amount_base = CASE
+            WHEN COALESCE(currency_original, currency, 'USD') = 'USD' THEN COALESCE(amount_original, amount, 0)
+            WHEN COALESCE(exchange_rate_to_usd, 0) = 0 THEN COALESCE(amount, 0)
+            ELSE ROUND(COALESCE(amount_original, amount, 0) / exchange_rate_to_usd, 2)
+        END
+        WHERE amount_base IS NULL OR amount_base = 0
+    """)
+    cursor.execute("""
+        UPDATE expenses
+        SET amount = amount_base
+        WHERE amount_base IS NOT NULL
     """)
     cursor.execute("""
         UPDATE expenses
@@ -271,9 +288,9 @@ def _run_schema_migrations(cursor):
         """)
 
     if current_version < 2:
-        _set_schema_version(cursor, 2)
+        _set_schema_version(cursor, 3)
     else:
-        _set_schema_version(cursor, max(current_version, 2))
+        _set_schema_version(cursor, max(current_version, 3))
 
 
 def ensure_db():

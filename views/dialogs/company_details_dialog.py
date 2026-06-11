@@ -15,6 +15,7 @@ import webbrowser
 import tempfile
 import os
 import re
+from money import base_amount
 
 class CompanyDetailsDialog(CenteredDialog):
     def __init__(self, company_name, parent=None):
@@ -67,8 +68,8 @@ class CompanyDetailsDialog(CenteredDialog):
         display_currency = currency.get_display_currency()
 
         approved_records = [r for r in self.records if r.get('status', 'approved') == 'approved']
-        total_in_usd = sum(r['amount'] for r in approved_records if r['type'] == 'incoming')
-        total_out_usd = sum(r['amount'] for r in approved_records if r['type'] == 'outgoing')
+        total_in_usd = sum(base_amount(r) for r in approved_records if r['type'] == 'incoming')
+        total_out_usd = sum(base_amount(r) for r in approved_records if r['type'] == 'outgoing')
         net_usd = total_in_usd - total_out_usd
         
         total_in_display = currency.convert(total_in_usd, 'USD', display_currency)
@@ -99,11 +100,11 @@ class CompanyDetailsDialog(CenteredDialog):
             elif r['type'] == 'incoming':
                 incoming_str = amount_str
                 outgoing_str = "—"
-                running_usd += r['amount']
+                running_usd += base_amount(r)
             else:
                 incoming_str = "—"
                 outgoing_str = amount_str
-                running_usd -= r['amount']
+                running_usd -= base_amount(r)
             
             running_display = currency.convert(running_usd, 'USD', display_currency)
             running_str = currency.format_amount(running_display, display_currency)
@@ -223,11 +224,11 @@ class CompanyDetailsDialog(CenteredDialog):
             elif r['type'] == 'incoming':
                 incoming_str = amount_str
                 outgoing_str = "—"
-                running_usd += r['amount']
+                running_usd += base_amount(r)
             else:
                 incoming_str = "—"
                 outgoing_str = amount_str
-                running_usd -= r['amount']
+                running_usd -= base_amount(r)
             
             running_display = currency.convert(running_usd, 'USD', display_currency)
             running_str = currency.format_amount(running_display, display_currency)

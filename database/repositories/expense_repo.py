@@ -5,7 +5,7 @@ from currency import currency
 import datetime
 from decimal import Decimal
 from typing import List, Dict
-from money import convert_to_usd, decimal_to_storage, quantize_money, to_decimal, rate_to_storage
+from money import convert_to_usd, decimal_to_storage, quantize_money, to_decimal, rate_to_storage, base_amount
 
 STATUS_APPROVED = 'approved'
 STATUS_WAITING_PAYMENT = 'waiting_payment'
@@ -14,6 +14,9 @@ STATUS_CANCELLED = 'cancelled'
 class ExpenseRepository(BaseRepository):
     def get_all(self, convert_to_display: bool = True) -> List[Dict]:
         expenses = self.db.get_expenses()
+        for e in expenses:
+            e['amount_base'] = decimal_to_storage(base_amount(e))
+            e['amount'] = e['amount_base']
         if convert_to_display:
             for e in expenses:
                 e['amount_display'] = e.get('amount_original', e['amount'])
@@ -47,6 +50,7 @@ class ExpenseRepository(BaseRepository):
         data = {
             'company_name': company_name,
             'amount': decimal_to_storage(amount_usd),
+            'amount_base': decimal_to_storage(amount_usd),
             'type': type_val,
             'date': date,
             'notes': notes,
@@ -79,13 +83,13 @@ class ExpenseRepository(BaseRepository):
             cursor = conn.execute('''
                 INSERT INTO expenses
                 (company_name, amount, type, date, notes, currency, created_by, created_at, updated_by, updated_at,
-                 amount_original, currency_original, exchange_rate_to_usd, status, payment_due_date, payment_reminder_note)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 amount_original, currency_original, exchange_rate_to_usd, amount_base, status, payment_due_date, payment_reminder_note)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
                 data['company_name'], data['amount'], data['type'], data['date'],
                 data.get('notes', ''), data['currency'], data['created_by'], data['created_at'],
                 data['updated_by'], data['updated_at'], data['amount_original'],
-                data['currency_original'], data['exchange_rate_to_usd'], data['status'],
+                data['currency_original'], data['exchange_rate_to_usd'], data['amount_base'], data['status'],
                 data['payment_due_date'], data['payment_reminder_note']
             ))
             new_id = cursor.lastrowid
@@ -115,6 +119,7 @@ class ExpenseRepository(BaseRepository):
         data = {
             'company_name': company_name,
             'amount': decimal_to_storage(amount_usd),
+            'amount_base': decimal_to_storage(amount_usd),
             'type': type_val,
             'date': date,
             'notes': notes,
@@ -146,12 +151,12 @@ class ExpenseRepository(BaseRepository):
                 UPDATE expenses SET
                     company_name=?, amount=?, type=?, date=?, notes=?, currency=?,
                     updated_by=?, updated_at=?, amount_original=?, currency_original=?, exchange_rate_to_usd=?,
-                    status=?, payment_due_date=?, payment_reminder_note=?
+                    amount_base=?, status=?, payment_due_date=?, payment_reminder_note=?
                 WHERE id=?
             ''', (
                 data['company_name'], data['amount'], data['type'], data['date'],
                 data.get('notes', ''), data['currency'], data['updated_by'], data['updated_at'],
-                data['amount_original'], data['currency_original'], data['exchange_rate_to_usd'],
+                data['amount_original'], data['currency_original'], data['exchange_rate_to_usd'], data['amount_base'],
                 data['status'], data['payment_due_date'], data['payment_reminder_note'], expense_id
             ))
             conn.execute('DELETE FROM payment_reminders WHERE expense_id=?', (expense_id,))
@@ -196,8 +201,8 @@ class ExpenseRepository(BaseRepository):
 
     def get_summary(self, convert_to_display: bool = True) -> Dict:
         expenses = [e for e in self.get_all(convert_to_display=False) if e.get('status', STATUS_APPROVED) == STATUS_APPROVED]
-        total_in_dec = sum((to_decimal(e['amount']) for e in expenses if e['type'] == 'incoming'), Decimal('0'))
-        total_out_dec = sum((to_decimal(e['amount']) for e in expenses if e['type'] == 'outgoing'), Decimal('0'))
+        total_in_dec = sum((base_amount(e) for e in expenses if e['type'] == 'incoming'), Decimal('0'))
+        total_out_dec = sum((base_amount(e) for e in expenses if e['type'] == 'outgoing'), Decimal('0'))
         total_in = decimal_to_storage(total_in_dec)
         total_out = decimal_to_storage(total_out_dec)
         companies_count = len(set(e['company_name'] for e in expenses))

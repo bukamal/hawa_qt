@@ -132,8 +132,8 @@ class DatabaseConnection:
         cursor = conn.execute('''
             INSERT INTO expenses
             (company_name, amount, type, date, notes, currency, created_by, created_at, updated_by, updated_at,
-             amount_original, currency_original, exchange_rate_to_usd, status, payment_due_date, payment_reminder_note)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             amount_original, currency_original, exchange_rate_to_usd, amount_base, status, payment_due_date, payment_reminder_note)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
             data['company_name'], data['amount'], data['type'], data['date'],
             data.get('notes', ''), data['currency'], data.get('created_by', 1), now,
@@ -141,6 +141,7 @@ class DatabaseConnection:
             data.get('amount_original', data['amount']),
             data.get('currency_original', data['currency']),
             data.get('exchange_rate_to_usd', 1.0),
+            data.get('amount_base', data['amount']),
             data.get('status', 'approved'),
             data.get('payment_due_date'),
             data.get('payment_reminder_note')
@@ -158,7 +159,7 @@ class DatabaseConnection:
             UPDATE expenses SET
                 company_name=?, amount=?, type=?, date=?, notes=?, currency=?,
                 updated_by=?, updated_at=?, amount_original=?, currency_original=?, exchange_rate_to_usd=?,
-                status=?, payment_due_date=?, payment_reminder_note=?
+                amount_base=?, status=?, payment_due_date=?, payment_reminder_note=?
             WHERE id=?
         ''', (
             data['company_name'], data['amount'], data['type'], data['date'],
@@ -166,6 +167,7 @@ class DatabaseConnection:
             data.get('amount_original', data['amount']),
             data.get('currency_original', data['currency']),
             data.get('exchange_rate_to_usd', 1.0),
+            data.get('amount_base', data['amount']),
             data.get('status', 'approved'),
             data.get('payment_due_date'),
             data.get('payment_reminder_note'),

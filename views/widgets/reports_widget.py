@@ -7,6 +7,7 @@ from datetime import datetime
 import webbrowser
 import tempfile
 import os
+from money import base_amount
 
 class ReportsWidget(QWidget):
     def __init__(self, parent=None):
@@ -129,8 +130,8 @@ class ReportsWidget(QWidget):
         repo = ExpenseRepository()
         all_expenses = repo.get_all(convert_to_display=True)
         filtered = [e for e in all_expenses if start_date <= e['date'] <= end_date]
-        total_income = sum(e['amount'] for e in filtered if e['type'] == 'incoming')
-        total_expense = sum(e['amount'] for e in filtered if e['type'] == 'outgoing')
+        total_income = sum(base_amount(e) for e in filtered if e['type'] == 'incoming')
+        total_expense = sum(base_amount(e) for e in filtered if e['type'] == 'outgoing')
         net = total_income - total_expense
         data = [
             [translate('revenues'), currency.format_amount(total_income)],
@@ -143,8 +144,8 @@ class ReportsWidget(QWidget):
         repo = ExpenseRepository()
         all_expenses = repo.get_all(convert_to_display=True)
         filtered = [e for e in all_expenses if e['date'] <= end_date]
-        total_income = sum(e['amount'] for e in filtered if e['type'] == 'incoming')
-        total_expense = sum(e['amount'] for e in filtered if e['type'] == 'outgoing')
+        total_income = sum(base_amount(e) for e in filtered if e['type'] == 'incoming')
+        total_expense = sum(base_amount(e) for e in filtered if e['type'] == 'outgoing')
         equity = total_income - total_expense
         data = [
             [translate('total_assets'), currency.format_amount(equity)],
@@ -163,9 +164,9 @@ class ReportsWidget(QWidget):
             if month not in monthly:
                 monthly[month] = {'incoming': 0, 'outgoing': 0}
             if e['type'] == 'incoming':
-                monthly[month]['incoming'] += e['amount']
+                monthly[month]['incoming'] += base_amount(e)
             else:
-                monthly[month]['outgoing'] += e['amount']
+                monthly[month]['outgoing'] += base_amount(e)
         data = []
         for m, val in sorted(monthly.items()):
             data.append([m, currency.format_amount(val['incoming']), currency.format_amount(val['outgoing']), currency.format_amount(val['incoming'] - val['outgoing'])])
@@ -181,9 +182,9 @@ class ReportsWidget(QWidget):
             if company not in company_balances:
                 company_balances[company] = 0
             if e['type'] == 'incoming':
-                company_balances[company] += e['amount']
+                company_balances[company] += base_amount(e)
             else:
-                company_balances[company] -= e['amount']
+                company_balances[company] -= base_amount(e)
         data = [[c, currency.format_amount(b)] for c, b in company_balances.items() if b != 0]
         data.sort(key=lambda x: x[0])
         self.display_table(data, [translate('company_name'), translate('amount')], self.customers_table)

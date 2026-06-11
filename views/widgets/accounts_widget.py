@@ -4,7 +4,8 @@ from PyQt5.QtWidgets import (
     QDialogButtonBox, QRadioButton, QButtonGroup, QCheckBox, QGroupBox,
     QSpinBox
 )
-from PyQt5.QtCore import Qt, QDate, pyqtSignal
+from PyQt5.QtCore import Qt, QDate, pyqtSignal, QUrl
+from PyQt5.QtGui import QDesktopServices
 from database import ExpenseRepository
 from i18n.translator import translate
 from views.custom_table_view import CustomTableView
@@ -21,6 +22,7 @@ import webbrowser
 import tempfile
 import os
 import re
+from money import base_amount
 
 # ------------------- حوار خيارات الطباعة -------------------
 class PrintOptionsDialog(QDialog):
@@ -177,7 +179,7 @@ class AccountsWidget(QWidget):
                     groups[e['company_name']]['overdue'] += 1
                 continue
             if status == 'approved':
-                groups[e['company_name']][e['type']] += e['amount']
+                groups[e['company_name']][e['type']] += base_amount(e)
 
         display_currency = currency.get_display_currency()
         data = []
@@ -242,12 +244,36 @@ class AccountsWidget(QWidget):
         if not text:
             return ''
         text = str(text)
-        bad = ['\u200e', '\u200f', '\ufeff', '\u202a', '\u202b', '\u202c', '\u202d', '\u202e', '浏', '']
+        bad = ['\u200e', '\u200f', '\ufeff', '\u202a', '\u202b', '\u202c', '\u202d', '\u202e', '浏']
         for ch in bad:
             text = text.replace(ch, '')
         text = re.sub(r'[^\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFFa-zA-Z0-9\s\-\.\,\:\;\(\)\/\+%\$]', '', text)
         text = re.sub(r'\s+', ' ', text)
         return text.strip()
+
+    def _open_html_report(self, html, title=None):
+        """حفظ تقرير HTML مؤقت وفتحه بطريقة متوافقة مع PyQt/النظام."""
+        if not html:
+            QMessageBox.warning(self, translate('warning'), 'تعذر توليد التقرير للطباعة')
+            return False
+        try:
+            fd, temp = tempfile.mkstemp(suffix='.html', prefix='hawaa_report_')
+            os.close(fd)
+            with open(temp, 'w', encoding='utf-8') as f:
+                f.write(html)
+
+            file_url = QUrl.fromLocalFile(os.path.abspath(temp))
+            opened = QDesktopServices.openUrl(file_url)
+            if not opened:
+                opened = webbrowser.open(file_url.toString())
+            if opened:
+                QMessageBox.information(self, title or translate('print_report'), translate('report_opened_in_browser'))
+                return True
+            QMessageBox.warning(self, translate('warning'), f'تم إنشاء التقرير لكن تعذر فتح المتصفح تلقائياً:\n{temp}')
+            return False
+        except Exception as e:
+            QMessageBox.critical(self, 'خطأ', f'فشل فتح تقرير الطباعة:\n{str(e)}')
+            return False
 
     def print_report(self):
         """طباعة تقرير إجماليات الشركات مع حوار خيارات"""
@@ -260,12 +286,7 @@ class AccountsWidget(QWidget):
             return
         settings = dialog.get_settings()
         html = self.generate_html_report(settings)
-        fd, temp = tempfile.mkstemp(suffix='.html', prefix='hawaa_report_')
-        os.close(fd)
-        with open(temp, 'w', encoding='utf-8') as f:
-            f.write(html)
-        webbrowser.open(f'file://{temp}')
-        QMessageBox.information(self, translate('print_report'), translate('report_opened_in_browser'))
+        self._open_html_report(html, translate('print_report'))
 
     def generate_html_report(self, settings):
         """توليد HTML للتقرير مع تطبيق إعدادات الطباعة"""
@@ -280,7 +301,9 @@ class AccountsWidget(QWidget):
         # تجميع البيانات
         groups = defaultdict(lambda: {'incoming': 0.0, 'outgoing': 0.0})
         for e in expenses:
-            groups[e['company_name']][e['type']] += e['amount']
+            if e.get('status', 'approved') != 'approved':
+                continue
+            groups[e['company_name']][e['type']] += base_amount(e)
 
         display_currency = currency.get_display_currency()
         decimals = currency.get_currency_decimals()
@@ -467,7 +490,8 @@ class AccountsWidget(QWidget):
     </div>
     <table>
         <thead>
-            <tr>{"".join(f'<th>{h}</th>' for h in headers)}</thead>
+            <tr>{"".join(f'<th>{h}</th>' for h in headers)}</tr>
+        </thead>
         <tbody>
             {table_rows}
             <tr class="total-row">
@@ -599,8 +623,8 @@ class AccountsWidget(QWidget):
         def format_full(amount):
             return f"{amount:,.{decimals}f} {symbol}"
         
-        total_in_usd = sum(r['amount'] for r in period_records if r['type'] == 'incoming')
-        total_out_usd = sum(r['amount'] for r in period_records if r['type'] == 'outgoing')
+        total_in_usd = sum(base_amount(r) for r in period_records if r['type'] == 'incoming')
+        total_out_usd = sum(base_amount(r) for r in period_records if r['type'] == 'outgoing')
         net_usd = total_in_usd - total_out_usd
         total_in_display = currency.convert(total_in_usd, 'USD', display_currency)
         total_out_display = currency.convert(total_out_usd, 'USD', display_currency)
@@ -609,7 +633,7 @@ class AccountsWidget(QWidget):
         opening_balance_usd = 0.0
         if is_cumulative:
             opening_records = [r for r in all_records if r['date'] < start_date]
-            opening_balance_usd = sum(r['amount'] if r['type'] == 'incoming' else -r['amount'] for r in opening_records)
+            opening_balance_usd = sum(base_amount(r) if r['type'] == 'incoming' else -base_amount(r) for r in opening_records)
         opening_balance_display = currency.convert(opening_balance_usd, 'USD', display_currency)
         
         table_rows = ""
@@ -623,11 +647,11 @@ class AccountsWidget(QWidget):
             if r['type'] == 'incoming':
                 incoming_str = amount_str
                 outgoing_str = "—"
-                running_usd += r['amount']
+                running_usd += base_amount(r)
             else:
                 incoming_str = "—"
                 outgoing_str = amount_str
-                running_usd -= r['amount']
+                running_usd -= base_amount(r)
             running_display = currency.convert(running_usd, 'USD', display_currency)
             running_str = format_full(running_display)
             row_class = "income-row" if r['type'] == 'incoming' else "expense-row"
@@ -711,7 +735,7 @@ class AccountsWidget(QWidget):
         💰 صافي: {format_full(net_display)}
     </div>
     <table class="data-table">
-        <thead><tr>{headers} through</thead>
+        <thead><tr>{headers}</tr></thead>
         <tbody>
             {opening_row}
             {table_rows}
@@ -721,9 +745,4 @@ class AccountsWidget(QWidget):
     <div class="footer">نظام هوى الشام للسياحة والسفر<br>تاريخ الطباعة: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}</div>
 </body>
 </html>"""
-        fd, temp = tempfile.mkstemp(suffix='.html', prefix='hawaa_report_')
-        os.close(fd)
-        with open(temp, 'w', encoding='utf-8') as f:
-            f.write(html)
-        webbrowser.open(f'file://{temp}')
-        QMessageBox.information(self, "طباعة التقرير", "تم فتح التقرير في المتصفح للطباعة.")
+        self._open_html_report(html, "طباعة التقرير")
