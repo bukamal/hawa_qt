@@ -1,5 +1,6 @@
 from PyQt5.QtWidgets import QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QMessageBox, QHeaderView, QFileDialog
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QUrl
+from PyQt5.QtGui import QDesktopServices
 from database import ExpenseRepository
 from auth.session import UserSession
 from i18n.translator import translate
@@ -75,6 +76,18 @@ class CompanyDetailsDialog(CenteredDialog):
     def _original_amount(record):
         return to_decimal(record.get('amount_original', record.get('amount', 0)))
 
+    @staticmethod
+    def _original_amount_label(record):
+        """Format the entry amount exactly in the currency selected when the entry was created.
+
+        This is used for the debit/credit columns (لنا/له) in both the screen and the
+        printed reports. It must not follow the global display currency, otherwise an
+        SYP entry would be re-rendered as USD in the detail columns.
+        """
+        amount_original = record.get('amount_original', record.get('amount', 0))
+        currency_original = record.get('currency_original') or record.get('currency') or 'USD'
+        return currency.format_amount(to_decimal(amount_original), currency_original)
+
     def refresh(self):
         repo = ExpenseRepository()
         records = repo.get_by_company(self.company_name, convert_to_display=False)
@@ -83,8 +96,8 @@ class CompanyDetailsDialog(CenteredDialog):
 
         approved_records = self._approved_non_waiting(self.records)
         original_currency = self._single_original_currency(approved_records)
-        use_original_running = bool(original_currency)
-        display_currency = original_currency if use_original_running else default_display_currency
+        use_original_running = bool(original_currency and original_currency == default_display_currency)
+        display_currency = default_display_currency
 
         if use_original_running:
             total_in_display = sum((self._original_amount(r) for r in approved_records if r['type'] == 'incoming'), Decimal('0'))
@@ -112,9 +125,9 @@ class CompanyDetailsDialog(CenteredDialog):
         data = []
         running_balance = Decimal('0')
         for idx, r in enumerate(self.records, start=1):
-            amount_original = r['amount_original']
-            currency_original = r['currency_original']
-            amount_str = f"{amount_original:,.2f} {currency_original}"
+            # حقلا لنا/له يعرضان دائماً المبلغ الأصلي بعملة القيد وقت الإدخال،
+            # ولا يتأثران بعملة العرض العامة.
+            amount_str = self._original_amount_label(r)
             
             if r.get('status') == 'waiting_payment':
                 incoming_str = "⏳ بانتظار الدفع"
@@ -233,15 +246,13 @@ class CompanyDetailsDialog(CenteredDialog):
         
         approved_records = self._approved_non_waiting(self.records)
         original_currency = self._single_original_currency(approved_records)
-        use_original_running = bool(original_currency)
-        if use_original_running:
-            display_currency = original_currency
+        use_original_running = bool(original_currency and original_currency == display_currency)
         running_balance = Decimal('0')
         table_rows = ""
         for idx, r in enumerate(self.records, start=1):
-            amount_original = r['amount_original']
-            currency_original = r['currency_original']
-            amount_str = f"{amount_original:,.2f} {currency_original}"
+            # حقلا لنا/له يعرضان دائماً المبلغ الأصلي بعملة القيد وقت الإدخال،
+            # ولا يتأثران بعملة العرض العامة.
+            amount_str = self._original_amount_label(r)
             notes = self.clean_text(r['notes'] or '—')
             date_display = r['date']
             
@@ -330,9 +341,19 @@ class CompanyDetailsDialog(CenteredDialog):
             QMessageBox.warning(self, translate('warning'), translate('no_data_for_print'))
             return
         html = self.generate_html_report()
-        fd, temp_html = tempfile.mkstemp(suffix='.html', prefix='hawaa_report_')
-        os.close(fd)
-        with open(temp_html, 'w', encoding='utf-8') as f:
-            f.write(html)
-        webbrowser.open(f'file://{temp_html}')
-        QMessageBox.information(self, translate('print_report'), translate('report_opened_in_browser'))
+        try:
+            fd, temp_html = tempfile.mkstemp(suffix='.html', prefix='hawaa_company_report_')
+            os.close(fd)
+            with open(temp_html, 'w', encoding='utf-8') as f:
+                f.write(html)
+
+            file_url = QUrl.fromLocalFile(os.path.abspath(temp_html))
+            opened = QDesktopServices.openUrl(file_url)
+            if not opened:
+                opened = webbrowser.open(file_url.toString())
+            if opened:
+                QMessageBox.information(self, translate('print_report'), translate('report_opened_in_browser'))
+            else:
+                QMessageBox.warning(self, translate('warning'), f'تم إنشاء التقرير لكن تعذر فتح المتصفح تلقائياً:\n{temp_html}')
+        except Exception as e:
+            QMessageBox.critical(self, 'خطأ', f'فشل فتح تقرير الطباعة:\n{str(e)}')

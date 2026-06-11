@@ -1,9 +1,11 @@
 from PyQt5.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QComboBox, QDateEdit, QMessageBox, QTabWidget, QTableWidget, QTableWidgetItem, QHeaderView
-from PyQt5.QtCore import Qt, QDate
+from PyQt5.QtCore import Qt, QDate, QUrl
+from PyQt5.QtGui import QDesktopServices
 from database import ExpenseRepository, UserRepository, AuditRepository
 from currency import currency
 from i18n.translator import translate
 from datetime import datetime
+from decimal import Decimal
 import webbrowser
 import tempfile
 import os
@@ -128,64 +130,72 @@ class ReportsWidget(QWidget):
 
     def load_income_statement(self, start_date, end_date):
         repo = ExpenseRepository()
-        all_expenses = repo.get_all(convert_to_display=True)
-        filtered = [e for e in all_expenses if start_date <= e['date'] <= end_date]
-        total_income = sum(base_amount(e) for e in filtered if e['type'] == 'incoming')
-        total_expense = sum(base_amount(e) for e in filtered if e['type'] == 'outgoing')
-        net = total_income - total_expense
+        all_expenses = repo.get_all(convert_to_display=False)
+        filtered = [e for e in all_expenses if start_date <= e['date'] <= end_date and e.get('status', 'approved') == 'approved']
+        total_income_usd = sum((base_amount(e) for e in filtered if e['type'] == 'incoming'), Decimal('0'))
+        total_expense_usd = sum((base_amount(e) for e in filtered if e['type'] == 'outgoing'), Decimal('0'))
+        net_usd = total_income_usd - total_expense_usd
+        display_currency = currency.get_display_currency()
         data = [
-            [translate('revenues'), currency.format_amount(total_income)],
-            [translate('expenses'), currency.format_amount(total_expense)],
-            [translate('net'), currency.format_amount(net)]
+            [translate('revenues'), currency.format_amount(currency.convert(total_income_usd, 'USD', display_currency), display_currency)],
+            [translate('expenses'), currency.format_amount(currency.convert(total_expense_usd, 'USD', display_currency), display_currency)],
+            [translate('net'), currency.format_amount(currency.convert(net_usd, 'USD', display_currency), display_currency)]
         ]
         self.display_table(data, [translate('statement'), translate('amount')], self.income_table)
 
     def load_balance_sheet(self, start_date, end_date):
         repo = ExpenseRepository()
-        all_expenses = repo.get_all(convert_to_display=True)
-        filtered = [e for e in all_expenses if e['date'] <= end_date]
-        total_income = sum(base_amount(e) for e in filtered if e['type'] == 'incoming')
-        total_expense = sum(base_amount(e) for e in filtered if e['type'] == 'outgoing')
-        equity = total_income - total_expense
+        all_expenses = repo.get_all(convert_to_display=False)
+        filtered = [e for e in all_expenses if e['date'] <= end_date and e.get('status', 'approved') == 'approved']
+        total_income_usd = sum((base_amount(e) for e in filtered if e['type'] == 'incoming'), Decimal('0'))
+        total_expense_usd = sum((base_amount(e) for e in filtered if e['type'] == 'outgoing'), Decimal('0'))
+        equity_usd = total_income_usd - total_expense_usd
+        display_currency = currency.get_display_currency()
+        equity = currency.convert(equity_usd, 'USD', display_currency)
         data = [
-            [translate('total_assets'), currency.format_amount(equity)],
-            [translate('total_liabilities'), currency.format_amount(0)],
-            [translate('equity'), currency.format_amount(equity)]
+            [translate('total_assets'), currency.format_amount(equity, display_currency)],
+            [translate('total_liabilities'), currency.format_amount(Decimal('0'), display_currency)],
+            [translate('equity'), currency.format_amount(equity, display_currency)]
         ]
         self.display_table(data, [translate('statement'), translate('amount')], self.balance_table)
 
     def load_bookings_summary(self, start_date, end_date):
         repo = ExpenseRepository()
-        all_expenses = repo.get_all(convert_to_display=True)
-        filtered = [e for e in all_expenses if start_date <= e['date'] <= end_date]
+        all_expenses = repo.get_all(convert_to_display=False)
+        filtered = [e for e in all_expenses if start_date <= e['date'] <= end_date and e.get('status', 'approved') == 'approved']
         monthly = {}
         for e in filtered:
             month = e['date'][:7]
             if month not in monthly:
-                monthly[month] = {'incoming': 0, 'outgoing': 0}
+                monthly[month] = {'incoming': Decimal('0'), 'outgoing': Decimal('0')}
             if e['type'] == 'incoming':
                 monthly[month]['incoming'] += base_amount(e)
             else:
                 monthly[month]['outgoing'] += base_amount(e)
+        display_currency = currency.get_display_currency()
         data = []
         for m, val in sorted(monthly.items()):
-            data.append([m, currency.format_amount(val['incoming']), currency.format_amount(val['outgoing']), currency.format_amount(val['incoming'] - val['outgoing'])])
+            incoming = currency.convert(val['incoming'], 'USD', display_currency)
+            outgoing = currency.convert(val['outgoing'], 'USD', display_currency)
+            net = currency.convert(val['incoming'] - val['outgoing'], 'USD', display_currency)
+            data.append([m, currency.format_amount(incoming, display_currency), currency.format_amount(outgoing, display_currency), currency.format_amount(net, display_currency)])
         self.display_table(data, [translate('month'), translate('revenues'), translate('expenses'), translate('net')], self.bookings_table)
 
     def load_customer_balances(self, start_date, end_date):
         repo = ExpenseRepository()
-        all_expenses = repo.get_all(convert_to_display=True)
-        filtered = [e for e in all_expenses if e['date'] <= end_date]
+        all_expenses = repo.get_all(convert_to_display=False)
+        filtered = [e for e in all_expenses if e['date'] <= end_date and e.get('status', 'approved') == 'approved']
         company_balances = {}
         for e in filtered:
             company = e['company_name']
             if company not in company_balances:
-                company_balances[company] = 0
+                company_balances[company] = Decimal('0')
             if e['type'] == 'incoming':
                 company_balances[company] += base_amount(e)
             else:
                 company_balances[company] -= base_amount(e)
-        data = [[c, currency.format_amount(b)] for c, b in company_balances.items() if b != 0]
+        display_currency = currency.get_display_currency()
+        data = [[c, currency.format_amount(currency.convert(b, 'USD', display_currency), display_currency)] for c, b in company_balances.items() if b != 0]
         data.sort(key=lambda x: x[0])
         self.display_table(data, [translate('company_name'), translate('amount')], self.customers_table)
 
@@ -252,7 +262,7 @@ class ReportsWidget(QWidget):
 <tbody>
 """
         for row in data:
-            html += "<td>" + "".join(f"一位{cell}一位" for cell in row) + "</tr>"
+            html += "<tr>" + "".join(f"<td>{cell}</td>" for cell in row) + "</tr>"
         html += f"""
 </tbody>
 </table>
@@ -263,9 +273,18 @@ class ReportsWidget(QWidget):
 
     def print_report(self):
         html = self.generate_html_report()
-        fd, temp = tempfile.mkstemp(suffix='.html', prefix='hawaa_report_')
-        os.close(fd)
-        with open(temp, 'w', encoding='utf-8') as f:
-            f.write(html)
-        webbrowser.open(f'file://{temp}')
-        QMessageBox.information(self, translate('print_report'), translate('report_opened_in_browser'))
+        try:
+            fd, temp = tempfile.mkstemp(suffix='.html', prefix='hawaa_report_')
+            os.close(fd)
+            with open(temp, 'w', encoding='utf-8') as f:
+                f.write(html)
+            file_url = QUrl.fromLocalFile(os.path.abspath(temp))
+            opened = QDesktopServices.openUrl(file_url)
+            if not opened:
+                opened = webbrowser.open(file_url.toString())
+            if opened:
+                QMessageBox.information(self, translate('print_report'), translate('report_opened_in_browser'))
+            else:
+                QMessageBox.warning(self, translate('warning'), f'تم إنشاء التقرير لكن تعذر فتح المتصفح تلقائياً:\n{temp}')
+        except Exception as e:
+            QMessageBox.critical(self, 'خطأ', f'فشل فتح تقرير الطباعة:\n{str(e)}')

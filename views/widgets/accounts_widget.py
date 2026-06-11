@@ -218,12 +218,12 @@ class AccountsWidget(QWidget):
     @staticmethod
     def _company_summary_display_values(records, incoming_base, outgoing_base, fallback_currency):
         """
-        يعرض إجمالي شركة واحدة بعملتها الأصلية إذا كانت كل قيودها المعتمدة بنفس العملة.
-        هذا يمنع فرق التقريب الناتج من: SYP -> USD -> SYP.
-        عند تعدد العملات، يرجع إلى العملة الأساسية/عملة العرض ويحسب من القيمة الأساسية.
+        يحترم عملة العرض المختارة.
+        يستخدم المبلغ الأصلي فقط عندما تكون كل قيود الشركة بنفس العملة وهذه العملة هي نفسها عملة العرض.
+        خلاف ذلك تُعرض المجاميع محولة من القيمة الأساسية USD حتى لا تبقى SYP ظاهرة عند اختيار USD.
         """
         original_currency = AccountsWidget._single_original_currency(records)
-        if original_currency:
+        if original_currency and original_currency == fallback_currency:
             incoming = sum((AccountsWidget._original_amount(r) for r in records if r.get('type') == 'incoming'), Decimal('0'))
             outgoing = sum((AccountsWidget._original_amount(r) for r in records if r.get('type') == 'outgoing'), Decimal('0'))
             return incoming, outgoing, incoming - outgoing, original_currency
@@ -650,6 +650,13 @@ class AccountsWidget(QWidget):
     def _original_amount(record):
         return to_decimal(record.get('amount_original', record.get('amount', 0)))
 
+    @staticmethod
+    def _original_amount_label(record):
+        """Format debit/credit columns using the entry's original currency only."""
+        amount_original = record.get('amount_original', record.get('amount', 0))
+        currency_original = record.get('currency_original') or record.get('currency') or 'USD'
+        return currency.format_amount(to_decimal(amount_original), currency_original)
+
     def generate_company_report(self, dialog):
         company = self.company_combo.currentText()
         start_date, end_date = self.get_date_range()
@@ -671,8 +678,8 @@ class AccountsWidget(QWidget):
         opening_records = [r for r in all_records if r['date'] < start_date and r.get('status', 'approved') == 'approved']
         currency_scope_records = active_period_records + (opening_records if is_cumulative else [])
         original_currency = self._single_original_currency(currency_scope_records)
-        use_original_running = bool(original_currency)
-        display_currency = original_currency if use_original_running else default_display_currency
+        use_original_running = bool(original_currency and original_currency == default_display_currency)
+        display_currency = default_display_currency
         decimals = currency.get_currency_decimals()
         symbol = currency.get_currency_symbol(display_currency)
         
@@ -702,9 +709,9 @@ class AccountsWidget(QWidget):
         table_rows = ""
         running_balance = opening_balance
         for r in period_records:
-            amount_original = r['amount_original']
-            currency_original = r['currency_original']
-            amount_str = f"{amount_original:,.2f} {currency_original}"
+            # حقلا لنا/له يعرضان دائماً المبلغ الأصلي بعملة القيد وقت الإدخال،
+            # ولا يتأثران بعملة العرض العامة.
+            amount_str = self._original_amount_label(r)
             notes = r['notes'] or '—'
             date_display = r['date']
             if r['type'] == 'incoming':
@@ -722,8 +729,8 @@ class AccountsWidget(QWidget):
             # ✅ تصحيح: استخدام </td> بدلاً من الحرف الصيني "一位"
             historical_rate_col = ""
             if show_historical_rate:
-                exchange_rate = r.get('exchange_rate_to_usd', 1.0)
-                historical_rate_col = f'<td class="center">{exchange_rate:.4f}</td>'
+                exchange_rate = to_decimal(r.get('exchange_rate_to_usd', 1))
+                historical_rate_col = f'<td class="center">{exchange_rate:,.4f}</td>'
             
             # ✅ تصحيح: إغلاق كل خلية بـ </tr> وإغلاق الصف بـ </tr>
             table_rows += f"""
