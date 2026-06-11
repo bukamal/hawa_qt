@@ -18,11 +18,12 @@ from auth.session import UserSession
 from config import get_company_info
 from collections import defaultdict
 from datetime import datetime
+from decimal import Decimal
 import webbrowser
 import tempfile
 import os
 import re
-from money import base_amount
+from money import base_amount, to_decimal
 
 # ------------------- حوار خيارات الطباعة -------------------
 class PrintOptionsDialog(QDialog):
@@ -166,7 +167,13 @@ class AccountsWidget(QWidget):
             QMessageBox.critical(self, "خطأ", f"فشل تحميل البيانات: {str(e)}")
             return
         search = self.search_edit.text().strip().lower()
-        groups = defaultdict(lambda: {'incoming': 0.0, 'outgoing': 0.0, 'waiting_payment': 0, 'overdue': 0})
+        groups = defaultdict(lambda: {
+            'incoming': Decimal('0'),
+            'outgoing': Decimal('0'),
+            'waiting_payment': 0,
+            'overdue': 0,
+            'approved_records': []
+        })
         today = datetime.now().date().isoformat()
         for e in expenses:
             if search and search not in e['company_name'].lower():
@@ -180,18 +187,22 @@ class AccountsWidget(QWidget):
                 continue
             if status == 'approved':
                 groups[e['company_name']][e['type']] += base_amount(e)
+                groups[e['company_name']]['approved_records'].append(e)
 
-        display_currency = currency.get_display_currency()
+        default_display_currency = currency.get_display_currency()
         data = []
         for company, vals in groups.items():
-            incoming_display = currency.convert(vals['incoming'], 'USD', display_currency)
-            outgoing_display = currency.convert(vals['outgoing'], 'USD', display_currency)
-            net_display = incoming_display - outgoing_display
+            incoming_display, outgoing_display, net_display, row_currency = self._company_summary_display_values(
+                vals.get('approved_records', []),
+                vals['incoming'],
+                vals['outgoing'],
+                default_display_currency
+            )
             data.append({
                 'company': company,
-                'incoming': currency.format_amount(incoming_display, display_currency),
-                'outgoing': currency.format_amount(outgoing_display, display_currency),
-                'net': currency.format_amount(net_display, display_currency),
+                'incoming': currency.format_amount(incoming_display, row_currency),
+                'outgoing': currency.format_amount(outgoing_display, row_currency),
+                'net': currency.format_amount(net_display, row_currency),
                 'payment_status': self._format_payment_status(vals),
                 'net_raw': net_display
             })
@@ -203,6 +214,22 @@ class AccountsWidget(QWidget):
         self.table.setModel(self.model)
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.table.refresh_style()
+
+    @staticmethod
+    def _company_summary_display_values(records, incoming_base, outgoing_base, fallback_currency):
+        """
+        يعرض إجمالي شركة واحدة بعملتها الأصلية إذا كانت كل قيودها المعتمدة بنفس العملة.
+        هذا يمنع فرق التقريب الناتج من: SYP -> USD -> SYP.
+        عند تعدد العملات، يرجع إلى العملة الأساسية/عملة العرض ويحسب من القيمة الأساسية.
+        """
+        original_currency = AccountsWidget._single_original_currency(records)
+        if original_currency:
+            incoming = sum((AccountsWidget._original_amount(r) for r in records if r.get('type') == 'incoming'), Decimal('0'))
+            outgoing = sum((AccountsWidget._original_amount(r) for r in records if r.get('type') == 'outgoing'), Decimal('0'))
+            return incoming, outgoing, incoming - outgoing, original_currency
+        incoming = currency.convert(incoming_base, 'USD', fallback_currency)
+        outgoing = currency.convert(outgoing_base, 'USD', fallback_currency)
+        return incoming, outgoing, incoming - outgoing, fallback_currency
 
     def _format_payment_status(self, vals):
         waiting = vals.get('waiting_payment', 0)
@@ -298,32 +325,42 @@ class AccountsWidget(QWidget):
             QMessageBox.critical(self, "خطأ", f"فشل تحميل البيانات: {str(e)}")
             return ""
 
-        # تجميع البيانات
-        groups = defaultdict(lambda: {'incoming': 0.0, 'outgoing': 0.0})
+        # تجميع البيانات: نحافظ على إجمالي كل شركة بعملتها الأصلية إذا كانت موحدة،
+        # مع إبقاء الإجمالي العام محسوبًا من القيمة الأساسية حتى لا تختلط العملات.
+        groups = defaultdict(lambda: {'incoming': Decimal('0'), 'outgoing': Decimal('0'), 'approved_records': []})
         for e in expenses:
             if e.get('status', 'approved') != 'approved':
                 continue
             groups[e['company_name']][e['type']] += base_amount(e)
+            groups[e['company_name']]['approved_records'].append(e)
 
         display_currency = currency.get_display_currency()
-        decimals = currency.get_currency_decimals()
-        symbol = currency.get_currency_symbol(display_currency)
+        total_decimals = currency.get_currency_decimals()
+        total_symbol = currency.get_currency_symbol(display_currency)
 
-        def format_full(amount):
-            return f"{amount:,.{decimals}f} {symbol}"
+        def format_amount_for(amount, curr):
+            return currency.format_amount(to_decimal(amount), curr)
+
+        def format_total(amount):
+            return f"{to_decimal(amount):,.{total_decimals}f} {total_symbol}"
 
         data_rows = []
-        total_in_all = 0.0
-        total_out_all = 0.0
+        total_in_all_base = Decimal('0')
+        total_out_all_base = Decimal('0')
         for company, vals in groups.items():
-            incoming = currency.convert(vals['incoming'], 'USD', display_currency)
-            outgoing = currency.convert(vals['outgoing'], 'USD', display_currency)
-            net = incoming - outgoing
-            total_in_all += incoming
-            total_out_all += outgoing
-            data_rows.append([company, incoming, outgoing, net, net])
+            incoming, outgoing, net, row_currency = self._company_summary_display_values(
+                vals.get('approved_records', []),
+                vals['incoming'],
+                vals['outgoing'],
+                display_currency
+            )
+            total_in_all_base += vals['incoming']
+            total_out_all_base += vals['outgoing']
+            data_rows.append([company, incoming, outgoing, net, net, row_currency])
         data_rows.sort(key=lambda x: x[0])
 
+        total_in_all = currency.convert(total_in_all_base, 'USD', display_currency)
+        total_out_all = currency.convert(total_out_all_base, 'USD', display_currency)
         total_net = total_in_all - total_out_all
 
         # تطبيق الإعدادات
@@ -376,9 +413,9 @@ class AccountsWidget(QWidget):
             <tr class="{row_class}">
                 {num_col}
                 <td class="center">{self.clean_text(row[0])}</td>
-                <td class="center {incoming_class}">{self.clean_text(format_full(row[1]))}</td>
-                <td class="center {outgoing_class}">{self.clean_text(format_full(row[2]))}</td>
-                <td class="center {net_class}">{self.clean_text(format_full(row[3]))}</td>
+                <td class="center {incoming_class}">{self.clean_text(format_amount_for(row[1], row[5]))}</td>
+                <td class="center {outgoing_class}">{self.clean_text(format_amount_for(row[2], row[5]))}</td>
+                <td class="center {net_class}">{self.clean_text(format_amount_for(row[3], row[5]))}</td>
             </tr>"""
 
         # بناء التذييل
@@ -484,9 +521,9 @@ class AccountsWidget(QWidget):
     <h1>{' - '.join(filter(None, ['تقرير حسابات الشركات', custom_title]))}</h1>
     <div class="company-info">{header_html}</div>
     <div class="summary">
-        📥 إجمالي وارد: {format_full(total_in_all)} &nbsp;|&nbsp;
-        📤 إجمالي صادر: {format_full(total_out_all)} &nbsp;|&nbsp;
-        💰 صافي الكلي: {format_full(total_net)}
+        📥 إجمالي وارد: {format_total(total_in_all)} &nbsp;|&nbsp;
+        📤 إجمالي صادر: {format_total(total_out_all)} &nbsp;|&nbsp;
+        💰 صافي الكلي: {format_total(total_net)}
     </div>
     <table>
         <thead>
@@ -497,9 +534,9 @@ class AccountsWidget(QWidget):
             <tr class="total-row">
                 {('<td class="center">—</td>' if show_row_numbers else '')}
                 <td class="center"><strong>الإجمالي الكلي</strong></td>
-                <td class="center income"><strong>{format_full(total_in_all)}</strong></td>
-                <td class="center expense"><strong>{format_full(total_out_all)}</strong></td>
-                <td class="center"><strong>{format_full(total_net)}</strong></td>
+                <td class="center income"><strong>{format_total(total_in_all)}</strong></td>
+                <td class="center expense"><strong>{format_total(total_out_all)}</strong></td>
+                <td class="center"><strong>{format_total(total_net)}</strong></td>
             </tr>
         </tbody>
     </table>
@@ -600,6 +637,19 @@ class AccountsWidget(QWidget):
             end = self.end_date.date()
         return start.toString("yyyy-MM-dd"), end.toString("yyyy-MM-dd")
 
+    @staticmethod
+    def _approved_non_waiting(records):
+        return [r for r in records if r.get('status', 'approved') == 'approved']
+
+    @staticmethod
+    def _single_original_currency(records):
+        currencies = {r.get('currency_original') for r in records if r.get('currency_original')}
+        return next(iter(currencies)) if len(currencies) == 1 else None
+
+    @staticmethod
+    def _original_amount(record):
+        return to_decimal(record.get('amount_original', record.get('amount', 0)))
+
     def generate_company_report(self, dialog):
         company = self.company_combo.currentText()
         start_date, end_date = self.get_date_range()
@@ -616,28 +666,41 @@ class AccountsWidget(QWidget):
             return
         dialog.accept()
 
-        display_currency = currency.get_display_currency()
+        default_display_currency = currency.get_display_currency()
+        active_period_records = self._approved_non_waiting(period_records)
+        opening_records = [r for r in all_records if r['date'] < start_date and r.get('status', 'approved') == 'approved']
+        currency_scope_records = active_period_records + (opening_records if is_cumulative else [])
+        original_currency = self._single_original_currency(currency_scope_records)
+        use_original_running = bool(original_currency)
+        display_currency = original_currency if use_original_running else default_display_currency
         decimals = currency.get_currency_decimals()
         symbol = currency.get_currency_symbol(display_currency)
         
         def format_full(amount):
-            return f"{amount:,.{decimals}f} {symbol}"
-        
-        total_in_usd = sum(base_amount(r) for r in period_records if r['type'] == 'incoming')
-        total_out_usd = sum(base_amount(r) for r in period_records if r['type'] == 'outgoing')
-        net_usd = total_in_usd - total_out_usd
-        total_in_display = currency.convert(total_in_usd, 'USD', display_currency)
-        total_out_display = currency.convert(total_out_usd, 'USD', display_currency)
-        net_display = currency.convert(net_usd, 'USD', display_currency)
-        
-        opening_balance_usd = 0.0
-        if is_cumulative:
-            opening_records = [r for r in all_records if r['date'] < start_date]
-            opening_balance_usd = sum(base_amount(r) if r['type'] == 'incoming' else -base_amount(r) for r in opening_records)
-        opening_balance_display = currency.convert(opening_balance_usd, 'USD', display_currency)
+            return f"{to_decimal(amount):,.{decimals}f} {symbol}"
+
+        if use_original_running:
+            total_in_display = sum((self._original_amount(r) for r in active_period_records if r['type'] == 'incoming'), Decimal('0'))
+            total_out_display = sum((self._original_amount(r) for r in active_period_records if r['type'] == 'outgoing'), Decimal('0'))
+            net_display = total_in_display - total_out_display
+            opening_balance = Decimal('0')
+            if is_cumulative:
+                opening_balance = sum((self._original_amount(r) if r['type'] == 'incoming' else -self._original_amount(r) for r in opening_records), Decimal('0'))
+            opening_balance_display = opening_balance
+        else:
+            total_in_usd = sum((base_amount(r) for r in active_period_records if r['type'] == 'incoming'), Decimal('0'))
+            total_out_usd = sum((base_amount(r) for r in active_period_records if r['type'] == 'outgoing'), Decimal('0'))
+            net_usd = total_in_usd - total_out_usd
+            total_in_display = currency.convert(total_in_usd, 'USD', display_currency)
+            total_out_display = currency.convert(total_out_usd, 'USD', display_currency)
+            net_display = currency.convert(net_usd, 'USD', display_currency)
+            opening_balance = Decimal('0')
+            if is_cumulative:
+                opening_balance = sum((base_amount(r) if r['type'] == 'incoming' else -base_amount(r) for r in opening_records), Decimal('0'))
+            opening_balance_display = currency.convert(opening_balance, 'USD', display_currency)
         
         table_rows = ""
-        running_usd = opening_balance_usd
+        running_balance = opening_balance
         for r in period_records:
             amount_original = r['amount_original']
             currency_original = r['currency_original']
@@ -647,12 +710,12 @@ class AccountsWidget(QWidget):
             if r['type'] == 'incoming':
                 incoming_str = amount_str
                 outgoing_str = "—"
-                running_usd += base_amount(r)
+                running_balance += self._original_amount(r) if use_original_running else base_amount(r)
             else:
                 incoming_str = "—"
                 outgoing_str = amount_str
-                running_usd -= base_amount(r)
-            running_display = currency.convert(running_usd, 'USD', display_currency)
+                running_balance -= self._original_amount(r) if use_original_running else base_amount(r)
+            running_display = running_balance if use_original_running else currency.convert(running_balance, 'USD', display_currency)
             running_str = format_full(running_display)
             row_class = "income-row" if r['type'] == 'incoming' else "expense-row"
             
@@ -673,12 +736,12 @@ class AccountsWidget(QWidget):
                 {historical_rate_col}
             </tr>"""
         
-        closing_balance_usd = running_usd
-        closing_balance_display = currency.convert(closing_balance_usd, 'USD', display_currency)
+        closing_balance = running_balance
+        closing_balance_display = closing_balance if use_original_running else currency.convert(closing_balance, 'USD', display_currency)
         
         # ✅ تصحيح: إغلاق الخلايا بـ <table> بدلاً من "一位"
         opening_row = ""
-        if is_cumulative and opening_balance_usd != 0:
+        if is_cumulative and opening_balance != 0:
             opening_row = f"""
             <tr class="opening-row">
                 <td class="center">قبل {start_date}</td>

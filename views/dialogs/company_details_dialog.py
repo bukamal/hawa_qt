@@ -10,12 +10,13 @@ from views.dialogs.add_edit_expense_dialog import AddEditExpenseDialog
 from views.toast import Toast
 from currency import currency
 from datetime import datetime
+from decimal import Decimal
 from config import get_company_info
 import webbrowser
 import tempfile
 import os
 import re
-from money import base_amount
+from money import base_amount, to_decimal
 
 class CompanyDetailsDialog(CenteredDialog):
     def __init__(self, company_name, parent=None):
@@ -61,20 +62,41 @@ class CompanyDetailsDialog(CenteredDialog):
 
         self.refresh()
 
+    @staticmethod
+    def _approved_non_waiting(records):
+        return [r for r in records if r.get('status', 'approved') == 'approved']
+
+    @staticmethod
+    def _single_original_currency(records):
+        currencies = {r.get('currency_original') for r in records if r.get('currency_original')}
+        return next(iter(currencies)) if len(currencies) == 1 else None
+
+    @staticmethod
+    def _original_amount(record):
+        return to_decimal(record.get('amount_original', record.get('amount', 0)))
+
     def refresh(self):
         repo = ExpenseRepository()
         records = repo.get_by_company(self.company_name, convert_to_display=False)
         self.records = sorted(records, key=lambda x: x['date'])
-        display_currency = currency.get_display_currency()
+        default_display_currency = currency.get_display_currency()
 
-        approved_records = [r for r in self.records if r.get('status', 'approved') == 'approved']
-        total_in_usd = sum(base_amount(r) for r in approved_records if r['type'] == 'incoming')
-        total_out_usd = sum(base_amount(r) for r in approved_records if r['type'] == 'outgoing')
-        net_usd = total_in_usd - total_out_usd
-        
-        total_in_display = currency.convert(total_in_usd, 'USD', display_currency)
-        total_out_display = currency.convert(total_out_usd, 'USD', display_currency)
-        net_display = currency.convert(net_usd, 'USD', display_currency)
+        approved_records = self._approved_non_waiting(self.records)
+        original_currency = self._single_original_currency(approved_records)
+        use_original_running = bool(original_currency)
+        display_currency = original_currency if use_original_running else default_display_currency
+
+        if use_original_running:
+            total_in_display = sum((self._original_amount(r) for r in approved_records if r['type'] == 'incoming'), Decimal('0'))
+            total_out_display = sum((self._original_amount(r) for r in approved_records if r['type'] == 'outgoing'), Decimal('0'))
+            net_display = total_in_display - total_out_display
+        else:
+            total_in_usd = sum((base_amount(r) for r in approved_records if r['type'] == 'incoming'), Decimal('0'))
+            total_out_usd = sum((base_amount(r) for r in approved_records if r['type'] == 'outgoing'), Decimal('0'))
+            net_usd = total_in_usd - total_out_usd
+            total_in_display = currency.convert(total_in_usd, 'USD', display_currency)
+            total_out_display = currency.convert(total_out_usd, 'USD', display_currency)
+            net_display = currency.convert(net_usd, 'USD', display_currency)
         
         self.total_in_display = total_in_display
         self.total_out_display = total_out_display
@@ -88,7 +110,7 @@ class CompanyDetailsDialog(CenteredDialog):
         )
 
         data = []
-        running_usd = 0.0
+        running_balance = Decimal('0')
         for idx, r in enumerate(self.records, start=1):
             amount_original = r['amount_original']
             currency_original = r['currency_original']
@@ -100,13 +122,13 @@ class CompanyDetailsDialog(CenteredDialog):
             elif r['type'] == 'incoming':
                 incoming_str = amount_str
                 outgoing_str = "—"
-                running_usd += base_amount(r)
+                running_balance += self._original_amount(r) if use_original_running else base_amount(r)
             else:
                 incoming_str = "—"
                 outgoing_str = amount_str
-                running_usd -= base_amount(r)
+                running_balance -= self._original_amount(r) if use_original_running else base_amount(r)
             
-            running_display = currency.convert(running_usd, 'USD', display_currency)
+            running_display = running_balance if use_original_running else currency.convert(running_balance, 'USD', display_currency)
             running_str = currency.format_amount(running_display, display_currency)
             
             data.append({
@@ -209,7 +231,12 @@ class CompanyDetailsDialog(CenteredDialog):
         total_out = self.total_out_display if hasattr(self, 'total_out_display') else 0
         net = self.net_display if hasattr(self, 'net_display') else 0
         
-        running_usd = 0.0
+        approved_records = self._approved_non_waiting(self.records)
+        original_currency = self._single_original_currency(approved_records)
+        use_original_running = bool(original_currency)
+        if use_original_running:
+            display_currency = original_currency
+        running_balance = Decimal('0')
         table_rows = ""
         for idx, r in enumerate(self.records, start=1):
             amount_original = r['amount_original']
@@ -224,13 +251,13 @@ class CompanyDetailsDialog(CenteredDialog):
             elif r['type'] == 'incoming':
                 incoming_str = amount_str
                 outgoing_str = "—"
-                running_usd += base_amount(r)
+                running_balance += self._original_amount(r) if use_original_running else base_amount(r)
             else:
                 incoming_str = "—"
                 outgoing_str = amount_str
-                running_usd -= base_amount(r)
+                running_balance -= self._original_amount(r) if use_original_running else base_amount(r)
             
-            running_display = currency.convert(running_usd, 'USD', display_currency)
+            running_display = running_balance if use_original_running else currency.convert(running_balance, 'USD', display_currency)
             running_str = currency.format_amount(running_display, display_currency)
             row_class = "income-row" if r['type'] == 'incoming' else "expense-row"
             
