@@ -3,6 +3,7 @@ import sqlite3
 import threading
 import os
 import logging
+import atexit
 from typing import List, Dict, Optional
 from PyQt5.QtCore import QSettings
 from app_config import get_db_path, DEFAULT_SERVER_URL
@@ -113,8 +114,17 @@ class DatabaseConnection:
 
     def close(self):
         if self._local_conn:
-            self._local_conn.close()
-            self._local_conn = None
+            try:
+                self._local_conn.close()
+            except Exception:
+                logger.exception("Failed to close local SQLite connection")
+            finally:
+                self._local_conn = None
+
+    @classmethod
+    def close_global(cls):
+        if cls._instance is not None:
+            cls._instance.close()
 
     # --- دوال CRUD موحدة (لا تحتاج تغيير) ---
     def get_expenses(self) -> List[Dict]:
@@ -301,3 +311,7 @@ class DatabaseConnection:
             self._local_conn.execute("VACUUM")
 
 DB_PATH = LOCAL_DB_PATH
+
+
+# Ensure Python shutdown does not emit ResourceWarning for the cached SQLite connection.
+atexit.register(DatabaseConnection.close_global)

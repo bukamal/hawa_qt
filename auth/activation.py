@@ -104,6 +104,16 @@ _NO_EXPIRY_VALUES = {
 }
 
 
+def _utc_naive_from_timestamp(value: float) -> datetime.datetime:
+    """Return a UTC-naive datetime without using deprecated utcfromtimestamp()."""
+    return datetime.datetime.fromtimestamp(value, datetime.timezone.utc).replace(tzinfo=None)
+
+
+def _utc_now_naive() -> datetime.datetime:
+    """Return current UTC as naive datetime for compatibility with stored license data."""
+    return datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
+
+
 def _parse_expiration(expiration):
     """Return (kind, datetime).
 
@@ -124,7 +134,7 @@ def _parse_expiration(expiration):
             # Support both Unix seconds and milliseconds.
             if value > 100_000_000_000:
                 value = value / 1000
-            return 'date', datetime.datetime.utcfromtimestamp(value)
+            return 'date', _utc_naive_from_timestamp(value)
         except Exception:
             return 'invalid', None
 
@@ -141,7 +151,7 @@ def _parse_expiration(expiration):
                 return 'never', None
             if num > 100_000_000_000:
                 num = num / 1000
-            return 'date', datetime.datetime.utcfromtimestamp(num)
+            return 'date', _utc_naive_from_timestamp(num)
     except Exception:
         pass
 
@@ -180,7 +190,7 @@ def _expiration_error(data: dict) -> Optional[str]:
     kind, parsed = _parse_expiration(expiration)
     if kind == 'invalid':
         return f'تاريخ انتهاء الترخيص غير مفهوم: {expiration}'
-    if kind == 'date' and parsed and datetime.datetime.utcnow() > parsed:
+    if kind == 'date' and parsed and _utc_now_naive() > parsed:
         return f'انتهى الترخيص بتاريخ {expiration}'
     return None
 
@@ -195,7 +205,7 @@ def activate(license_key: str) -> Tuple[bool, str]:
             'key': license_key,
             'device': device_id,
             'expiration': result.get('expirationDate'),
-            'activated_at': __import__('datetime').datetime.now().isoformat()
+            'activated_at': datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat()
         }
         _write_license(LICENSE_FILE, _encrypt_license(data, device_id))
         return True, ""
@@ -230,7 +240,7 @@ def activate_network(license_key: str) -> Tuple[bool, str]:
             'key': license_key,
             'device': device_id,
             'expiration': result.get('expirationDate'),
-            'activated_at': __import__('datetime').datetime.now().isoformat()
+            'activated_at': datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat()
         }
         _write_license(NETWORK_LICENSE_FILE, _encrypt_license(data, device_id))
         return True, ""

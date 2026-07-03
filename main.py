@@ -10,6 +10,43 @@ import tempfile
 import threading
 from logging_config import setup_logging
 from error_handling import install_exception_hooks
+
+
+def configure_qt_runtime_environment():
+    """Prepare Linux/root Qt runtime before QApplication is created.
+
+    Running from containers, root sessions, or lightweight Linux desktops often
+    lacks XDG_RUNTIME_DIR and may trigger Chromium/QtWebEngine sandbox helper
+    warnings. These settings are harmless on normal Windows builds and keep the
+    startup log clean in root-based test environments.
+    """
+    if sys.platform.startswith('linux'):
+        if not os.environ.get('XDG_RUNTIME_DIR'):
+            user_name = os.environ.get('USER') or os.environ.get('USERNAME') or 'user'
+            runtime_dir = os.path.join('/tmp', f'runtime-{user_name}')
+            try:
+                os.makedirs(runtime_dir, exist_ok=True)
+                os.chmod(runtime_dir, 0o700)
+                os.environ['XDG_RUNTIME_DIR'] = runtime_dir
+            except Exception:
+                pass
+
+        try:
+            is_root = hasattr(os, 'geteuid') and os.geteuid() == 0
+        except Exception:
+            is_root = False
+        if is_root:
+            os.environ.setdefault('QTWEBENGINE_DISABLE_SANDBOX', '1')
+            current_flags = os.environ.get('QTWEBENGINE_CHROMIUM_FLAGS', '')
+            required_flags = ['--no-sandbox', '--disable-dev-shm-usage', '--disable-gpu']
+            for flag in required_flags:
+                if flag not in current_flags:
+                    current_flags = (current_flags + ' ' + flag).strip()
+            os.environ['QTWEBENGINE_CHROMIUM_FLAGS'] = current_flags
+
+
+configure_qt_runtime_environment()
+
 from PyQt5.QtWidgets import QApplication, QMessageBox
 from PyQt5.QtCore import QTimer, QSettings
 from PyQt5.QtGui import QFont
@@ -139,6 +176,13 @@ def restart_backup():
     new_thread = start_periodic_backup()
     return new_thread
 
+def close_runtime_resources():
+    try:
+        from database.connection import DatabaseConnection
+        DatabaseConnection.close_global()
+    except Exception:
+        logging.getLogger(__name__).exception("Failed to close runtime database resources")
+
 def test_server_connection(url):
     try:
         resp = requests.get(f"{url}/health", timeout=3)
@@ -238,6 +282,7 @@ def main():
         dlg = ActivationDialog(old_splash)
         if dlg.exec() != ActivationDialog.Accepted:
             old_splash.close()
+            close_runtime_resources()
             sys.exit(0)
         old_splash.close()
         old_splash.deleteLater()
@@ -251,6 +296,7 @@ def main():
     splash.hide()
     if login.exec() != LoginDialog.Accepted:
         stop_license_checker()
+        close_runtime_resources()
         sys.exit(0)
 
     current_user = UserSession.get_current() or {}
@@ -292,6 +338,7 @@ def main():
     finally:
         if _backup_stop_event is not None:
             _backup_stop_event.set()
+        close_runtime_resources()
     sys.exit(exit_code)
 
 if __name__ == "__main__":
