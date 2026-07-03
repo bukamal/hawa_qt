@@ -11,44 +11,44 @@ class ThemeManager:
     LIGHT = {
         'bg_window': '#ffffff',
         'bg_panel': '#f8fafc',
-        'bg_sidebar': '#f1f5f9',
+        'bg_sidebar': '#f0fdfa',
         'bg_table': '#ffffff',
         'bg_table_alt': '#f8fafc',
         'text_primary': '#1e293b',
         'text_secondary': '#475569',
         'text_muted': '#64748b',
         'border': '#e2e8f0',
-        'border_focus': '#4f46e5',
-        'primary': '#4f46e5',
-        'primary_hover': '#4338ca',
+        'border_focus': '#0f766e',
+        'primary': '#0f766e',
+        'primary_hover': '#115e59',
         'success': '#10b981',
         'danger': '#ef4444',
         'warning': '#f59e0b',
         'info': '#3b82f6',
         'header_bg': '#f1f5f9',
-        'selection_bg': '#4f46e5',
+        'selection_bg': '#0f766e',
         'selection_text': '#ffffff',
     }
 
     DARK = {
         'bg_window': '#0f172a',
         'bg_panel': '#1e293b',
-        'bg_sidebar': '#0f172a',
+        'bg_sidebar': '#042f2e',
         'bg_table': '#1e293b',
         'bg_table_alt': '#0f172a',
         'text_primary': '#f8fafc',
         'text_secondary': '#cbd5e1',
         'text_muted': '#94a3b8',
         'border': '#334155',
-        'border_focus': '#6366f1',
-        'primary': '#6366f1',
-        'primary_hover': '#4f46e5',
+        'border_focus': '#2dd4bf',
+        'primary': '#2dd4bf',
+        'primary_hover': '#14b8a6',
         'success': '#10b981',
         'danger': '#f43f5e',
         'warning': '#f59e0b',
         'info': '#3b82f6',
         'header_bg': '#1e293b',
-        'selection_bg': '#4f46e5',
+        'selection_bg': '#0f766e',
         'selection_text': '#ffffff',
     }
 
@@ -92,10 +92,17 @@ class ThemeManager:
     @classmethod
     def _generate_stylesheet(cls, colors):
         return f"""
-            QMainWindow, QDialog, QWidget {{
+            QMainWindow, QDialog {{
                 background-color: {colors['bg_window']};
                 color: {colors['text_primary']};
                 font-family: 'Tajawal', 'Segoe UI', sans-serif;
+            }}
+            QWidget {{
+                color: {colors['text_primary']};
+                font-family: 'Tajawal', 'Segoe UI', sans-serif;
+            }}
+            QLabel, QCheckBox, QRadioButton {{
+                background: transparent;
             }}
             QFrame#sidebar, QFrame#MainFrame {{
                 background-color: {colors['bg_sidebar']};
@@ -250,5 +257,71 @@ class ThemeManager:
                 left: 10px;
                 padding: 0 6px 0 6px;
                 color: {colors['text_primary']};
+            }}
+
+            QWidget#CentralWidget {{
+                background-color: transparent;
+            }}
+            QFrame#CommandBar {{
+                background-color: {colors['bg_panel']};
+                border-bottom: 1px solid {colors['border']};
+            }}
+            QFrame#NavigationRail {{
+                background-color: {colors['bg_sidebar']};
+                border-left: 1px solid {colors['border']};
+            }}
+            QStackedWidget#DocumentWorkspace {{
+                background-color: {colors['bg_window']};
+            }}
+            QFrame#InlinePanel {{
+                background-color: {colors['bg_panel']};
+                border-left: 1px solid {colors['border']};
+                border-top-left-radius: 18px;
+                border-bottom-left-radius: 18px;
+            }}
+            QLabel#InlinePanelTitle {{
+                font-size: 16px;
+                font-weight: 800;
+                color: {colors['text_primary']};
+                padding: 4px 2px 10px 2px;
+                border-bottom: 1px solid {colors['border']};
+            }}
+            QPushButton#NavigationButton, QPushButton#nav_button, QPushButton[active="true"] {{
+                text-align: right;
+            }}
+            QPushButton#NavigationButton, QPushButton#nav_button {{
+                background-color: transparent;
+                border: 1px solid transparent;
+                border-radius: 10px;
+                padding: 10px 12px;
+                font-weight: 700;
+            }}
+            QPushButton#NavigationButton:hover, QPushButton#nav_button:hover {{
+                background-color: {colors['bg_panel']};
+                border-color: {colors['border']};
+            }}
+            QPushButton#NavigationButton[active="true"], QPushButton#nav_button[active="true"] {{
+                background-color: {colors['primary']};
+                color: white;
+                border-color: {colors['primary']};
+            }}
+            QLabel#SidebarLogo {{
+                padding: 8px 4px 14px 4px;
+                color: {colors['text_primary']};
+                font-size: 18px;
+                font-weight: 800;
+            }}
+            QLabel#TitleBrandText {{
+                font-size: 14px;
+                font-weight: 800;
+                color: {colors['text_primary']};
+            }}
+            QFrame#MetricCard, QFrame#SummaryCard, QFrame#ReportCard {{
+                background-color: {colors['bg_panel']};
+                border: 1px solid {colors['border']};
+                border-radius: 16px;
+            }}
+            QFrame#MetricCard:hover, QFrame#SummaryCard:hover, QFrame#ReportCard:hover {{
+                border-color: {colors['primary']};
             }}
         """

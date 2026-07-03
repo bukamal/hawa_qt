@@ -12,7 +12,7 @@ from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from app_config import get_db_path, get_jwt_secret, is_default_jwt_secret
 from logging_config import setup_logging
-from money import quantize_money, decimal_to_storage, rate_to_storage
+from money import quantize_money, decimal_to_storage, rate_to_storage, to_decimal, convert_to_usd
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -87,6 +87,58 @@ def admin_required(fn):
         return fn(*args, **kwargs)
     return wrapper
 
+def role_required(*allowed_roles):
+    def decorator(fn):
+        @wraps(fn)
+        @jwt_required()
+        def wrapper(*args, **kwargs):
+            user_id = get_jwt_identity()
+            conn = get_db()
+            user = conn.execute('SELECT role FROM users WHERE id = ?', (user_id,)).fetchone()
+            if not user or user['role'] not in allowed_roles:
+                return jsonify({'error': 'Insufficient privileges'}), 403
+            return fn(*args, **kwargs)
+        return wrapper
+    return decorator
+
+write_required = role_required('admin', 'user', 'accountant', 'manager')
+
+
+def _current_rate_to_usd(conn, currency_code):
+    code = (currency_code or 'USD').upper()
+    if code == 'USD':
+        return to_decimal(1)
+    row = conn.execute('SELECT rate_to_usd FROM exchange_rates WHERE currency_code=?', (code,)).fetchone()
+    return to_decimal(row['rate_to_usd'] if row else 1)
+
+
+
+
+def _resolve_expense_status(amount_original, requested_status=None):
+    if requested_status in {'approved', 'waiting_payment', 'cancelled'}:
+        return requested_status
+    return 'waiting_payment' if quantize_money(amount_original) == 0 else 'approved'
+
+def _expense_snapshot(conn, data, existing=None):
+    amount_original = quantize_money(data.get('amount_original', data.get('amount', 0)))
+    currency_original = (data.get('currency_original') or data.get('currency') or 'USD').upper()
+    rate = _current_rate_to_usd(conn, currency_original)
+    if existing and (existing['currency_original'] or existing['currency'] or '').upper() == currency_original:
+        old_rate = to_decimal(existing['exchange_rate_to_usd'], 0)
+        if old_rate > 0:
+            # Preserve the row historical rate when editing the same original currency.
+            rate = old_rate
+    amount_base = convert_to_usd(amount_original, currency_original, rate)
+    return {
+        'amount_original': decimal_to_storage(amount_original),
+        'currency_original': currency_original,
+        'exchange_rate_to_usd': rate_to_storage(rate),
+        'amount_base': decimal_to_storage(amount_base),
+        'amount': decimal_to_storage(amount_base),
+        'currency': currency_original,
+    }
+
+
 def log_audit(action, table_name, record_id, details, request_obj):
     user_id = get_jwt_identity() if request_obj.headers.get('Authorization') else None
     username = None
@@ -148,7 +200,7 @@ def get_expenses():
     return jsonify([dict(row) for row in rows])
 
 @app.route('/api/expenses', methods=['POST'])
-@jwt_required()
+@write_required
 @limiter.limit("50 per minute")
 def add_expense():
     user_id = int(get_jwt_identity())
@@ -159,21 +211,22 @@ def add_expense():
             return jsonify({'error': f'Missing field: {f}'}), 400
     conn = get_db()
     now = datetime.datetime.now().isoformat()
+    snapshot = _expense_snapshot(conn, data)
+    if to_decimal(snapshot['amount_original']) < 0:
+        return jsonify({'error': 'Amount cannot be negative'}), 400
+    final_status = _resolve_expense_status(snapshot['amount_original'], data.get('status'))
     cursor = conn.execute('''
         INSERT INTO expenses
         (company_name, amount, type, date, notes, currency, created_by, created_at, updated_by, updated_at,
          amount_original, currency_original, exchange_rate_to_usd, amount_base, status, payment_due_date, payment_reminder_note)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ''', (
-        data['company_name'], decimal_to_storage(data['amount']), data['type'], data['date'],
-        data.get('notes', ''), data['currency'], user_id, now, user_id, now,
-        decimal_to_storage(data.get('amount_original', data['amount'])),
-        data.get('currency_original', data['currency']),
-        rate_to_storage(data.get('exchange_rate_to_usd', 1.0)),
-        decimal_to_storage(data.get('amount_base', data['amount'])),
-        data.get('status', 'approved'),
-        data.get('payment_due_date'),
-        data.get('payment_reminder_note')
+        data['company_name'], snapshot['amount'], data['type'], data['date'],
+        data.get('notes', ''), snapshot['currency'], user_id, now, user_id, now,
+        snapshot['amount_original'], snapshot['currency_original'], snapshot['exchange_rate_to_usd'], snapshot['amount_base'],
+        final_status,
+        data.get('payment_due_date') if final_status == 'waiting_payment' else None,
+        data.get('payment_reminder_note') if final_status == 'waiting_payment' else None
     ))
     conn.commit()
     new_id = cursor.lastrowid
@@ -181,13 +234,20 @@ def add_expense():
     return jsonify({'id': new_id}), 201
 
 @app.route('/api/expenses/<int:expense_id>', methods=['PUT'])
-@jwt_required()
+@write_required
 @limiter.limit("50 per minute")
 def update_expense(expense_id):
     user_id = int(get_jwt_identity())
     data = request.get_json()
     conn = get_db()
     now = datetime.datetime.now().isoformat()
+    existing = conn.execute('SELECT * FROM expenses WHERE id=?', (expense_id,)).fetchone()
+    if not existing:
+        return jsonify({'error': 'Expense not found'}), 404
+    snapshot = _expense_snapshot(conn, data, existing=existing)
+    if to_decimal(snapshot['amount_original']) < 0:
+        return jsonify({'error': 'Amount cannot be negative'}), 400
+    final_status = _resolve_expense_status(snapshot['amount_original'], data.get('status'))
     conn.execute('''
         UPDATE expenses SET
             company_name=?, amount=?, type=?, date=?, notes=?, currency=?,
@@ -195,15 +255,12 @@ def update_expense(expense_id):
             amount_base=?, status=?, payment_due_date=?, payment_reminder_note=?
         WHERE id=?
     ''', (
-        data['company_name'], decimal_to_storage(data['amount']), data['type'], data['date'],
-        data.get('notes', ''), data['currency'], user_id, now,
-        decimal_to_storage(data.get('amount_original', data['amount'])),
-        data.get('currency_original', data['currency']),
-        rate_to_storage(data.get('exchange_rate_to_usd', 1.0)),
-        decimal_to_storage(data.get('amount_base', data['amount'])),
-        data.get('status', 'approved'),
-        data.get('payment_due_date'),
-        data.get('payment_reminder_note'),
+        data['company_name'], snapshot['amount'], data['type'], data['date'],
+        data.get('notes', ''), snapshot['currency'], user_id, now,
+        snapshot['amount_original'], snapshot['currency_original'], snapshot['exchange_rate_to_usd'], snapshot['amount_base'],
+        final_status,
+        data.get('payment_due_date') if final_status == 'waiting_payment' else None,
+        data.get('payment_reminder_note') if final_status == 'waiting_payment' else None,
         expense_id
     ))
     conn.commit()
@@ -211,7 +268,7 @@ def update_expense(expense_id):
     return jsonify({'status': 'ok'})
 
 @app.route('/api/expenses/<int:expense_id>', methods=['DELETE'])
-@jwt_required()
+@write_required
 @limiter.limit("30 per minute")
 def delete_expense(expense_id):
     user_id = int(get_jwt_identity())
@@ -221,6 +278,7 @@ def delete_expense(expense_id):
         details = f"الشركة: {row['company_name']}, المبلغ: {row['amount_original']} {row['currency_original']}"
     else:
         details = ''
+    conn.execute('DELETE FROM payment_reminders WHERE expense_id = ?', (expense_id,))
     conn.execute('DELETE FROM expenses WHERE id = ?', (expense_id,))
     conn.commit()
     log_audit('حذف قيد', 'expenses', expense_id, details, request)
@@ -355,11 +413,60 @@ def update_exchange_rate(currency_code):
         return jsonify({'error': 'rate_to_usd required'}), 400
     now = datetime.datetime.now().isoformat()
     conn = get_db()
+    stored_rate = rate_to_storage(rate_to_usd)
     conn.execute('INSERT OR REPLACE INTO exchange_rates (currency_code, rate_to_usd, updated_at) VALUES (?, ?, ?)',
-                 (currency_code, rate_to_storage(rate_to_usd), now))
+                 (currency_code, stored_rate, now))
+    conn.execute('''
+        CREATE TABLE IF NOT EXISTS exchange_rate_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            currency_code TEXT NOT NULL,
+            rate_to_usd REAL NOT NULL,
+            effective_date TEXT NOT NULL,
+            source TEXT DEFAULT 'manual',
+            created_at TEXT NOT NULL
+        )
+    ''')
+    conn.execute('''
+        INSERT INTO exchange_rate_history (currency_code, rate_to_usd, effective_date, source, created_at)
+        VALUES (?, ?, ?, 'manual', ?)
+    ''', (currency_code, stored_rate, now[:10], now))
     conn.commit()
     log_audit('تحديث سعر صرف', 'exchange_rates', 0, f'{currency_code} = {rate_to_usd}', request)
     return jsonify({'status': 'ok'})
+
+@app.route('/api/exchange_rate_history', methods=['GET'])
+@jwt_required()
+@limiter.limit("100 per minute")
+def get_exchange_rate_history():
+    conn = get_db()
+    currency_code = request.args.get('currency_code')
+    limit = min(int(request.args.get('limit', 500)), 2000)
+    conn.execute('''
+        CREATE TABLE IF NOT EXISTS exchange_rate_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            currency_code TEXT NOT NULL,
+            rate_to_usd REAL NOT NULL,
+            effective_date TEXT NOT NULL,
+            source TEXT DEFAULT 'manual',
+            created_at TEXT NOT NULL
+        )
+    ''')
+    if currency_code:
+        rows = conn.execute('''
+            SELECT currency_code, rate_to_usd, effective_date, source, created_at
+            FROM exchange_rate_history
+            WHERE currency_code=?
+            ORDER BY effective_date DESC, id DESC
+            LIMIT ?
+        ''', (currency_code, limit)).fetchall()
+    else:
+        rows = conn.execute('''
+            SELECT currency_code, rate_to_usd, effective_date, source, created_at
+            FROM exchange_rate_history
+            ORDER BY effective_date DESC, id DESC
+            LIMIT ?
+        ''', (limit,)).fetchall()
+    return jsonify([dict(row) for row in rows])
 
 @app.route('/health', methods=['GET'])
 def health():

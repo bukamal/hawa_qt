@@ -60,8 +60,15 @@ class SettingsWidget(QWidget):
 
         self.base_curr_combo = QComboBox()
         self.base_curr_combo.addItems(["USD", "SAR", "SYP", "EUR", "GBP", "AED", "QAR", "KWD", "OMR"])
-        self.base_curr_combo.setCurrentText(currency.get_base_currency())
-        form.addRow("العملة الأساسية (للتخزين):", self.base_curr_combo)
+        self.base_curr_combo.setCurrentText("USD")
+        self.base_curr_combo.setEnabled(False)
+        self.base_curr_combo.setToolTip("ثابتة محاسبياً: كل الأرصدة تحفظ بالدولار، أما العملة المعروضة فهي للعرض فقط")
+        form.addRow("العملة المحاسبية الأساسية:", self.base_curr_combo)
+
+        base_note = QLabel("العملة الأساسية مثبتة على USD لحماية السعر التاريخي. تغيير عملة العرض لا يعيد تسعير القيود القديمة.")
+        base_note.setWordWrap(True)
+        base_note.setStyleSheet("color: #92400e; background: #fffbeb; border: 1px solid #f59e0b; border-radius: 8px; padding: 8px;")
+        form.addRow("", base_note)
 
         self.display_curr_combo = QComboBox()
         self.display_curr_combo.addItems(["USD", "SAR", "SYP", "EUR", "GBP", "AED", "QAR", "KWD", "OMR"])
@@ -103,6 +110,18 @@ class SettingsWidget(QWidget):
         self.rates_table.setHorizontalHeaderLabels(["العملة", "السعر", "آخر تحديث"])
         self.rates_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         inner.addWidget(self.rates_table)
+
+        history_label = QLabel("آخر تعديلات أسعار الصرف — تستخدم للرجوع والتدقيق، أما القيود القديمة فتحتفظ بسعرها داخل القيد نفسه.")
+        history_label.setWordWrap(True)
+        history_label.setStyleSheet("color: #475569; margin-top: 8px;")
+        inner.addWidget(history_label)
+
+        self.rate_history_table = QTableWidget()
+        self.rate_history_table.setColumnCount(4)
+        self.rate_history_table.setHorizontalHeaderLabels(["العملة", "السعر", "التاريخ الفعّال", "المصدر"])
+        self.rate_history_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.rate_history_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        inner.addWidget(self.rate_history_table)
 
         refresh_btn = QPushButton("تحديث الأسعار من الإنترنت")
         refresh_btn.clicked.connect(self.fetch_online_rates)
@@ -353,7 +372,7 @@ class SettingsWidget(QWidget):
             QMessageBox.critical(self, "خطأ", f"فشل تشغيل الخادم: {str(e)}")
 
     def stop_server_process(self):
-        if not self.server_process or self.server_process.poll() is None:
+        if not self.server_process or self.server_process.poll() is not None:
             self.server_process = None
             self.update_server_status()
             QMessageBox.information(self, "تنبيه", "الخادم غير قيد التشغيل.")
@@ -568,6 +587,7 @@ class SettingsWidget(QWidget):
             QMessageBox.warning(self, "تنبيه", "لا يمكن إنشاء نسخة احتياطية من جهاز عميل.")
             return
         from database.connection import DB_PATH
+        from services.backup_service import backup_service
         folder = self.backup_folder.text().strip()
         if not folder:
             QMessageBox.warning(self, "خطأ", "يرجى تحديد مجلد النسخ الاحتياطي أولاً")
@@ -578,8 +598,8 @@ class SettingsWidget(QWidget):
         backup_name = f"hawaa_backup_{timestamp}.db"
         backup_path = os.path.join(folder, backup_name)
         try:
-            shutil.copy2(DB_PATH, backup_path)
-            QMessageBox.information(self, "نجاح", f"تم إنشاء النسخة الاحتياطية:\n{backup_path}")
+            backup_service.create_backup(DB_PATH, backup_path)
+            QMessageBox.information(self, "نجاح", f"تم إنشاء النسخة الاحتياطية بعد فحص السلامة:\n{backup_path}")
         except Exception as e:
             QMessageBox.critical(self, "خطأ", f"فشل النسخ الاحتياطي: {str(e)}")
 
@@ -589,12 +609,13 @@ class SettingsWidget(QWidget):
             QMessageBox.warning(self, "تنبيه", "لا يمكن تصدير قاعدة البيانات في وضع العميل.")
             return
         from database.connection import DB_PATH
+        from services.backup_service import backup_service
         filename, _ = QFileDialog.getSaveFileName(self, "تصدير قاعدة البيانات", "hawaa_data_backup.db", "SQLite (*.db)")
         if filename:
             try:
                 if os.path.exists(DB_PATH):
-                    shutil.copy2(DB_PATH, filename)
-                    QMessageBox.information(self, "نجاح", f"تم التصدير إلى:\n{filename}")
+                    backup_service.create_backup(DB_PATH, filename)
+                    QMessageBox.information(self, "نجاح", f"تم التصدير بعد فحص السلامة إلى:\n{filename}")
                 else:
                     QMessageBox.warning(self, "تنبيه", "لا توجد قاعدة بيانات محلية للتصدير")
             except Exception as e:
@@ -606,6 +627,7 @@ class SettingsWidget(QWidget):
             QMessageBox.warning(self, "تنبيه", "لا يمكن استيراد قاعدة البيانات في وضع العميل.")
             return
         from database.connection import DB_PATH
+        from services.backup_service import backup_service
         filename, _ = QFileDialog.getOpenFileName(self, "استيراد قاعدة البيانات", "", "SQLite (*.db)")
         if filename:
             reply = QMessageBox.question(self, "تأكيد", 
@@ -619,8 +641,8 @@ class SettingsWidget(QWidget):
                     db_conn = DatabaseConnection()
                     db_conn.close()
                     time.sleep(0.5)
-                    shutil.copy2(filename, DB_PATH)
-                    QMessageBox.information(self, "نجاح", "تم الاستيراد.")
+                    backup_service.restore_backup(filename, DB_PATH)
+                    QMessageBox.information(self, "نجاح", "تم الاستيراد بعد فحص سلامة النسخة.")
                 except Exception as e:
                     QMessageBox.critical(self, "خطأ", f"فشل الاستيراد: {str(e)}")
                     if was_running:
@@ -742,13 +764,28 @@ class SettingsWidget(QWidget):
         self.rates_table.setRowCount(len(rates))
         for row, r in enumerate(rates):
             self.rates_table.setItem(row, 0, QTableWidgetItem(r['currency_code']))
-            rate_item = QTableWidgetItem(f"{r['rate_to_usd']:.4f}")
+            rate_item = QTableWidgetItem(f"{float(r['rate_to_usd']):.4f}")
             rate_item.setFlags(rate_item.flags() | Qt.ItemIsEditable)
             self.rates_table.setItem(row, 1, rate_item)
             self.rates_table.setItem(row, 2, QTableWidgetItem(r['updated_at'][:19] if r['updated_at'] else ''))
+        self.load_rate_history_table()
+
+    def load_rate_history_table(self):
+        if not hasattr(self, 'rate_history_table'):
+            return
+        try:
+            history = currency.get_exchange_rate_history(limit=30)
+        except Exception:
+            history = []
+        self.rate_history_table.setRowCount(len(history))
+        for row, item in enumerate(history):
+            self.rate_history_table.setItem(row, 0, QTableWidgetItem(str(item.get('currency_code', ''))))
+            self.rate_history_table.setItem(row, 1, QTableWidgetItem(f"{float(item.get('rate_to_usd', 0)):.4f}"))
+            self.rate_history_table.setItem(row, 2, QTableWidgetItem(str(item.get('effective_date', ''))))
+            self.rate_history_table.setItem(row, 3, QTableWidgetItem(str(item.get('source', ''))))
 
     def save_currency_settings(self):
-        base_curr = self.base_curr_combo.currentText()
+        base_curr = "USD"
         display_curr = self.display_curr_combo.currentText()
         decimals = self.decimals_spin.value()
         fmt = 'western' if self.format_combo.currentIndex() == 0 else 'arabic'
@@ -772,6 +809,7 @@ class SettingsWidget(QWidget):
                 return
 
         self.repo.clear_cache()
+        self.load_rates_table()
         QMessageBox.information(self, translate('success'), "تم حفظ إعدادات العملة وأسعار الصرف")
         main_window = self.window()
         if hasattr(main_window, 'apply_theme_to_pages'):

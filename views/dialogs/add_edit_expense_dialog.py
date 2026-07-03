@@ -6,6 +6,7 @@ from i18n.translator import translate
 from views.centered_dialog import CenteredDialog
 from currency import currency
 from money import convert_to_usd, to_decimal
+from services.currency_ledger_service import currency_ledger
 
 class AddEditExpenseDialog(CenteredDialog):
     def __init__(self, parent=None, expense=None, company_name=None):
@@ -157,10 +158,24 @@ class AddEditExpenseDialog(CenteredDialog):
     def update_labels(self):
         amount = self.amount_spin.value()
         curr = self.currency_combo.currentText()
-        rate = currency.get_rate_to_usd(curr)
-        usd_value = convert_to_usd(amount, curr, rate)
-        self.conversion_label.setText(f"≈ {float(usd_value):.2f} USD (حسب سعر الصرف الحالي)")
-        self.rate_label.setText(f"سعر الصرف الحالي: 1 USD = {float(to_decimal(rate)):.4f} {curr}")
+        existing = self.expense if self.expense else None
+        snapshot = currency_ledger.make_snapshot(amount, curr, existing_record=existing)
+        usd_value = snapshot.amount_base
+        current_rate = currency.get_rate_to_usd(curr)
+        preserved = bool(
+            existing
+            and (existing.get('currency_original') or existing.get('currency')) == curr
+            and to_decimal(existing.get('exchange_rate_to_usd'), 0) > 0
+        )
+        if preserved:
+            self.conversion_label.setText(f"≈ {float(usd_value):.2f} USD (محسوب بالسعر التاريخي المحفوظ)")
+            self.rate_label.setText(
+                f"سيُحفظ السعر التاريخي للقيد: {currency_ledger.historical_rate_label(snapshot.exchange_rate_to_usd, curr)} | "
+                f"السعر الحالي للمرجع فقط: 1 USD = {float(to_decimal(current_rate)):.4f} {curr}"
+            )
+        else:
+            self.conversion_label.setText(f"≈ {float(usd_value):.2f} USD (حسب سعر الصرف الحالي وسيتم تثبيته على القيد)")
+            self.rate_label.setText(f"سعر الصرف الحالي: 1 USD = {float(to_decimal(current_rate)):.4f} {curr}")
     
     def save(self):
         if self.predefined_company:

@@ -78,6 +78,15 @@ def init_database():
             updated_at TEXT
         );
 
+        CREATE TABLE IF NOT EXISTS exchange_rate_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            currency_code TEXT NOT NULL,
+            rate_to_usd REAL NOT NULL,
+            effective_date TEXT NOT NULL,
+            source TEXT DEFAULT 'manual',
+            created_at TEXT NOT NULL
+        );
+
         CREATE TABLE IF NOT EXISTS token_blacklist (
             jti TEXT PRIMARY KEY,
             created_at TEXT
@@ -109,6 +118,8 @@ def init_database():
         CREATE INDEX IF NOT EXISTS idx_audit_log_user ON audit_log(user_id);
         CREATE INDEX IF NOT EXISTS idx_audit_log_timestamp ON audit_log(timestamp);
         CREATE INDEX IF NOT EXISTS idx_audit_log_table ON audit_log(table_name);
+        CREATE INDEX IF NOT EXISTS idx_exchange_rate_history_currency_date
+            ON exchange_rate_history(currency_code, effective_date);
     ''')
 
     cursor.executescript('''
@@ -129,7 +140,7 @@ def init_database():
     cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('company_logo_path', '')")
 
     cursor.execute("DELETE FROM schema_version")
-    cursor.execute("INSERT INTO schema_version(version) VALUES (3)")
+    cursor.execute("INSERT INTO schema_version(version) VALUES (4)")
 
     now = datetime.datetime.now().isoformat()
     default_rates = [
@@ -139,6 +150,14 @@ def init_database():
     for code, rate in default_rates:
         cursor.execute("INSERT OR IGNORE INTO exchange_rates (currency_code, rate_to_usd, updated_at) VALUES (?,?,?)",
                        (code, rate, now))
+        cursor.execute("""
+            INSERT INTO exchange_rate_history (currency_code, rate_to_usd, effective_date, source, created_at)
+            SELECT ?, ?, ?, 'seed', ?
+            WHERE NOT EXISTS (
+                SELECT 1 FROM exchange_rate_history
+                WHERE currency_code=? AND effective_date=? AND source='seed'
+            )
+        """, (code, rate, now[:10], now, code, now[:10]))
 
     cursor.execute("SELECT id FROM users WHERE username = 'admin'")
     if not cursor.fetchone():
@@ -171,8 +190,9 @@ def _backup_before_migration():
     os.makedirs(backup_dir, exist_ok=True)
     stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     backup_path = os.path.join(backup_dir, f"backup_before_migration_{stamp}.db")
-    import shutil
-    shutil.copy2(DB_PATH, backup_path)
+    with sqlite3.connect(DB_PATH) as src, sqlite3.connect(backup_path) as dst:
+        src.execute('PRAGMA wal_checkpoint(FULL)')
+        src.backup(dst)
     logger.info("تم إنشاء نسخة احتياطية قبل الترحيل: %s", backup_path)
     return backup_path
 
@@ -208,7 +228,7 @@ def _run_schema_migrations(cursor):
     current_version = _get_schema_version(cursor)
 
     if not _table_exists(cursor, "expenses"):
-        _set_schema_version(cursor, 3)
+        _set_schema_version(cursor, 4)
         return
 
     _add_column_if_missing(cursor, "expenses", "amount_original", "amount_original REAL NOT NULL DEFAULT 0")
@@ -287,10 +307,34 @@ def _run_schema_migrations(cursor):
             )
         """)
 
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS exchange_rate_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            currency_code TEXT NOT NULL,
+            rate_to_usd REAL NOT NULL,
+            effective_date TEXT NOT NULL,
+            source TEXT DEFAULT 'manual',
+            created_at TEXT NOT NULL
+        )
+    """)
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_exchange_rate_history_currency_date
+            ON exchange_rate_history(currency_code, effective_date)
+    """)
+    cursor.execute("""
+        INSERT INTO exchange_rate_history (currency_code, rate_to_usd, effective_date, source, created_at)
+        SELECT er.currency_code, er.rate_to_usd, SUBSTR(COALESCE(er.updated_at, CURRENT_TIMESTAMP), 1, 10), 'current_import', COALESCE(er.updated_at, CURRENT_TIMESTAMP)
+        FROM exchange_rates er
+        WHERE NOT EXISTS (
+            SELECT 1 FROM exchange_rate_history h
+            WHERE h.currency_code = er.currency_code
+        )
+    """)
+
     if current_version < 2:
-        _set_schema_version(cursor, 3)
+        _set_schema_version(cursor, 4)
     else:
-        _set_schema_version(cursor, max(current_version, 3))
+        _set_schema_version(cursor, max(current_version, 4))
 
 
 def ensure_db():

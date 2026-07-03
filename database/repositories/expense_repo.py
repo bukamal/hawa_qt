@@ -5,18 +5,34 @@ from currency import currency
 import datetime
 from decimal import Decimal
 from typing import List, Dict
-from money import convert_to_usd, decimal_to_storage, quantize_money, to_decimal, rate_to_storage, base_amount
+from money import decimal_to_storage, quantize_money, to_decimal, rate_to_storage, base_amount
+from services.currency_ledger_service import currency_ledger
 
 STATUS_APPROVED = 'approved'
 STATUS_WAITING_PAYMENT = 'waiting_payment'
 STATUS_CANCELLED = 'cancelled'
 
 class ExpenseRepository(BaseRepository):
+    def get_by_id(self, expense_id: int, convert_to_display: bool = True) -> Dict:
+        if self.db.is_remote():
+            rows = self.db.get_expenses()
+            record = next((dict(r) for r in rows if int(r.get('id', 0)) == int(expense_id)), None)
+        else:
+            conn = self.db.get_connection()
+            row = conn.execute('SELECT * FROM expenses WHERE id=?', (expense_id,)).fetchone()
+            record = dict(row) if row else None
+        if not record:
+            return None
+        currency_ledger.normalize_record(record)
+        if convert_to_display:
+            record['amount_display'] = record.get('amount_original', record.get('amount'))
+            record['currency_display'] = record.get('currency_original', record.get('currency', 'SAR'))
+        return record
+
     def get_all(self, convert_to_display: bool = True) -> List[Dict]:
         expenses = self.db.get_expenses()
         for e in expenses:
-            e['amount_base'] = decimal_to_storage(base_amount(e))
-            e['amount'] = e['amount_base']
+            currency_ledger.normalize_record(e)
         if convert_to_display:
             for e in expenses:
                 e['amount_display'] = e.get('amount_original', e['amount'])
@@ -43,8 +59,9 @@ class ExpenseRepository(BaseRepository):
         amount_dec = quantize_money(amount)
         if amount_dec < Decimal('0.00'):
             raise ValueError('لا يمكن حفظ مبلغ سالب')
-        rate_to_usd = currency.get_rate_to_usd(currency_code)
-        amount_usd = convert_to_usd(amount_dec, currency_code, rate_to_usd)
+        snapshot = currency_ledger.make_snapshot(amount_dec, currency_code)
+        amount_usd = snapshot.amount_base
+        rate_to_usd = snapshot.exchange_rate_to_usd
         final_status = self._resolve_status(amount_dec, status)
         now = datetime.datetime.now().isoformat()
         data = {
@@ -112,8 +129,10 @@ class ExpenseRepository(BaseRepository):
         amount_dec = quantize_money(amount)
         if amount_dec < Decimal('0.00'):
             raise ValueError('لا يمكن حفظ مبلغ سالب')
-        rate_to_usd = currency.get_rate_to_usd(currency_code)
-        amount_usd = convert_to_usd(amount_dec, currency_code, rate_to_usd)
+        existing = self.get_by_id(expense_id, convert_to_display=False)
+        snapshot = currency_ledger.make_snapshot(amount_dec, currency_code, existing_record=existing)
+        amount_usd = snapshot.amount_base
+        rate_to_usd = snapshot.exchange_rate_to_usd
         final_status = self._resolve_status(amount_dec, status)
         now = datetime.datetime.now().isoformat()
         data = {

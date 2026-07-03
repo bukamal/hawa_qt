@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html dir="rtl" lang="ar">
+<head>
+<meta charset="UTF-8">
+<title>{{title}}</title>
+<style>{{style}}</style>
+</head>
+<body>
+<div class="report-shell">
+  <div class="report-header">
+    <div>
+      <div class="brand-line">
+        <span class="brand-mark">هوى</span>
+        <span class="brand-subtitle">نظام الحسابات</span>
+      </div>
+      <h1>{{title}}</h1>
+      {{subtitle_html}}
+    </div>
+    <div class="generated-box">
+      <div>تاريخ الإنشاء</div>
+      <strong>{{generated_at}}</strong>
+    </div>
+  </div>
+  {{body_html}}
+  <div class="footer">
+    تم توليد التقرير من نظام هوى. العملة الأساسية المحاسبية هي USD، وعملة العرض لا تعيد تسعير القيود القديمة؛ كل قيد يحتفظ بسعر الصرف التاريخي الخاص به.
+  </div>
+</div>
+</body>
+</html>

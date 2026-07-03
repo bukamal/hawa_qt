@@ -2,22 +2,24 @@
 import logging
 from PyQt5.QtWidgets import QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QStackedWidget, QPushButton, QLabel, QFrame, QMessageBox, QApplication
 from PyQt5.QtCore import Qt, QPoint, QPropertyAnimation, QTimer, pyqtSignal
-from PyQt5.QtGui import QIcon
+from PyQt5.QtGui import QIcon, QPixmap
 import qtawesome as qta
 import requests
 from auth.session import UserSession
 from i18n.translator import translate, set_language
 from database import SettingsRepository
 from theme_manager import ThemeManager
-from views.widgets.dashboard_widget import DashboardWidget
-from views.widgets.accounts_widget import AccountsWidget
-from views.widgets.users_widget import UsersWidget
-from views.widgets.audit_log_widget import AuditLogWidget
-from views.widgets.settings_widget import SettingsWidget
+from ui.shell.dashboard_shell import DashboardShell
+from ui.shell.accounting_shell import AccountingShell
+from ui.shell.users_shell import UsersShell
+from ui.shell.reports_shell import ReportsShell
+from ui.shell.audit_shell import AuditShell
+from ui.shell.settings_shell import SettingsShell
 from views.dialogs.change_password_dialog import ChangePasswordDialog
 from views.login_dialog import LoginDialog
 from views.custom_table_view import CustomTableView
 from views.toast import Toast
+from branding import APP_DISPLAY_NAME_AR, APP_TAGLINE_AR, branding_path, safe_qicon
 
 class MainWindow(QMainWindow):
     # إضافة إشارة للتحريك
@@ -28,6 +30,9 @@ class MainWindow(QMainWindow):
         self.setWindowFlags(Qt.FramelessWindowHint)
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setLayoutDirection(Qt.LeftToRight)
+        icon = safe_qicon()
+        if icon is not None:
+            self.setWindowIcon(icon)
         self.setMinimumSize(1200, 700)
         self.resize(1400, 900)
         self.drag_pos = None
@@ -120,10 +125,17 @@ class MainWindow(QMainWindow):
         title_layout.setContentsMargins(15,0,10,0)
         self.title_layout = title_layout
 
-        icon_label = QLabel("🏢")
-        icon_label.setFixedSize(24,24)
+        icon_label = QLabel()
+        icon_label.setObjectName("TitleBrandIcon")
+        icon_label.setFixedSize(28,28)
+        symbol = QPixmap(branding_path("app_icon_64.png"))
+        if not symbol.isNull():
+            icon_label.setPixmap(symbol.scaled(28, 28, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+        else:
+            icon_label.setText("◆")
         title_layout.addWidget(icon_label)
         self.title_label = QLabel(translate('app_title'))
+        self.title_label.setObjectName("TitleBrandText")
         title_layout.addWidget(self.title_label)
         title_layout.addStretch()
 
@@ -171,16 +183,21 @@ class MainWindow(QMainWindow):
         self.title_bar.mouseReleaseEvent = self._mouse_release
 
         self.pages = {}
-        self.pages['dashboard'] = DashboardWidget(self)
-        self.pages['accounts'] = AccountsWidget(self)
+        self.pages['dashboard'] = DashboardShell(self)
+        self.pages['accounts'] = AccountingShell(self)
+        self.pages['reports'] = ReportsShell(self)
         
         user_role = UserSession.get_current().get('role') if UserSession.get_current() else 'user'
         if user_role == 'admin':
-            self.pages['users'] = UsersWidget(self)
-            self.pages['audit_log'] = AuditLogWidget(self)
-        self.pages['settings'] = SettingsWidget(self)
+            self.pages['users'] = UsersShell(self)
+            self.pages['audit_log'] = AuditShell(self)
+        elif user_role == 'auditor':
+            self.pages['audit_log'] = AuditShell(self)
+        self.pages['settings'] = SettingsShell(self)
         self.pages['accounts'].data_changed.connect(self.pages['dashboard'].refresh_needed.emit)
+        self.pages['accounts'].data_changed.connect(self.pages['reports'].refresh_table)
         self.pages['settings'].rates_changed.connect(self.pages['accounts'].refresh_table)
+        self.pages['settings'].rates_changed.connect(self.pages['reports'].refresh_table)
         for page in self.pages.values():
             self.stack.addWidget(page)
 
@@ -194,21 +211,35 @@ class MainWindow(QMainWindow):
         self.toggle_btn.clicked.connect(self.toggle_sidebar)
         self.sidebar_layout.addWidget(self.toggle_btn, alignment=Qt.AlignRight)
 
-        self.logo_label = QLabel("🏢 هوى الشام")
+        self.logo_label = QLabel()
+        self.logo_label.setObjectName("SidebarLogo")
         self.logo_label.setAlignment(Qt.AlignCenter)
+        logo_pixmap = QPixmap(branding_path("app_logo.png"))
+        if not logo_pixmap.isNull():
+            self.logo_label.setPixmap(logo_pixmap.scaled(210, 64, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+        else:
+            self.logo_label.setText(APP_DISPLAY_NAME_AR)
+        self.logo_label.setToolTip(APP_TAGLINE_AR)
         self.sidebar_layout.addWidget(self.logo_label)
 
         self.nav_buttons = {}
         user_role = UserSession.get_current().get('role') if UserSession.get_current() else 'user'
         
-        pages = [('dashboard','📊',translate('dashboard')), ('accounts','📋',translate('accounts'))]
+        pages = [
+            ('dashboard', 'fa5s.chart-line', translate('dashboard')),
+            ('accounts', 'fa5s.book', translate('accounts')),
+            ('reports', 'fa5s.file-invoice', translate('reports')),
+        ]
         if user_role == 'admin':
-            pages.append(('users','👥',translate('users')))
-            pages.append(('audit_log','📜',translate('audit_log')))
-        pages.append(('settings','⚙️',translate('settings')))
+            pages.append(('users', 'fa5s.users', translate('users')))
+            pages.append(('audit_log', 'fa5s.history', translate('audit_log')))
+        elif user_role == 'auditor':
+            pages.append(('audit_log', 'fa5s.history', translate('audit_log')))
+        pages.append(('settings', 'fa5s.cog', translate('settings')))
 
-        for pid,icon,txt in pages:
-            btn = QPushButton(f"{icon} {txt}")
+        for pid, icon_name, txt in pages:
+            btn = QPushButton(txt)
+            btn.setIcon(qta.icon(icon_name, color=ThemeManager.get('text_secondary')))
             btn.setObjectName("nav_button")
             btn.setFixedHeight(45)
             btn.setCursor(Qt.PointingHandCursor)
@@ -217,12 +248,14 @@ class MainWindow(QMainWindow):
             self.nav_buttons[pid] = btn
 
         self.sidebar_layout.addStretch()
-        self.logout_btn = QPushButton("🚪 "+translate('logout'))
+        self.logout_btn = QPushButton(translate('logout'))
+        self.logout_btn.setIcon(qta.icon('fa5s.sign-out-alt', color=ThemeManager.get('text_secondary')))
         self.logout_btn.setFixedHeight(40)
         self.logout_btn.clicked.connect(self.logout)
         self.sidebar_layout.addWidget(self.logout_btn)
 
-        self.change_pwd_btn = QPushButton("🔑 "+translate('change_password'))
+        self.change_pwd_btn = QPushButton(translate('change_password'))
+        self.change_pwd_btn.setIcon(qta.icon('fa5s.key', color=ThemeManager.get('text_secondary')))
         self.change_pwd_btn.setFixedHeight(40)
         self.change_pwd_btn.clicked.connect(self.change_password)
         self.sidebar_layout.addWidget(self.change_pwd_btn)
@@ -239,29 +272,41 @@ class MainWindow(QMainWindow):
 
     def _update_sidebar_buttons(self):
         if self.sidebar_collapsed:
-            for pid,btn in self.nav_buttons.items():
+            for pid, btn in self.nav_buttons.items():
                 txt = btn.text()
-                icon = txt.split(' ')[0]
-                btn.setText(icon)
-                btn.setToolTip(txt.split(' ',1)[1] if len(txt.split(' '))>1 else '')
-            self.logout_btn.setText("🚪")
-            self.change_pwd_btn.setText("🔑")
-            self.logo_label.setText("🏢")
+                btn.setToolTip(txt)
+                btn.setText("")
+            self.logout_btn.setText("")
+            self.logout_btn.setIcon(qta.icon('fa5s.sign-out-alt', color=ThemeManager.get('text_secondary')))
+            self.change_pwd_btn.setText("")
+            self.change_pwd_btn.setIcon(qta.icon('fa5s.key', color=ThemeManager.get('text_secondary')))
+            icon_pm = QPixmap(branding_path("app_icon_64.png"))
+            if not icon_pm.isNull():
+                self.logo_label.setPixmap(icon_pm.scaled(42, 42, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+            else:
+                self.logo_label.setText("◆")
         else:
             user_role = UserSession.get_current().get('role') if UserSession.get_current() else 'user'
-            texts = {'dashboard':('📊',translate('dashboard')), 'accounts':('📋',translate('accounts'))}
+            texts = {'dashboard': translate('dashboard'), 'accounts': translate('accounts'), 'reports': translate('reports')}
             if user_role == 'admin':
-                texts['users'] = ('👥',translate('users'))
-                texts['audit_log'] = ('📜',translate('audit_log'))
-            texts['settings'] = ('⚙️',translate('settings'))
+                texts['users'] = translate('users')
+                texts['audit_log'] = translate('audit_log')
+            elif user_role == 'auditor':
+                texts['audit_log'] = translate('audit_log')
+            texts['settings'] = translate('settings')
             for pid,btn in self.nav_buttons.items():
                 if pid in texts:
-                    icon,txt = texts[pid]
-                    btn.setText(f"{icon} {txt}")
+                    btn.setText(texts[pid])
                 btn.setToolTip('')
-            self.logout_btn.setText("🚪 "+translate('logout'))
-            self.change_pwd_btn.setText("🔑 "+translate('change_password'))
-            self.logo_label.setText("🏢 هوى الشام")
+            self.logout_btn.setText(translate('logout'))
+            self.logout_btn.setIcon(qta.icon('fa5s.sign-out-alt', color=ThemeManager.get('text_secondary')))
+            self.change_pwd_btn.setText(translate('change_password'))
+            self.change_pwd_btn.setIcon(qta.icon('fa5s.key', color=ThemeManager.get('text_secondary')))
+            logo_pm = QPixmap(branding_path("app_logo.png"))
+            if not logo_pm.isNull():
+                self.logo_label.setPixmap(logo_pm.scaled(210, 64, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+            else:
+                self.logo_label.setText(APP_DISPLAY_NAME_AR)
 
     def _mouse_press(self, event):
         if event.button() == Qt.LeftButton:
@@ -324,17 +369,22 @@ class MainWindow(QMainWindow):
         for page in self.pages.values():
             self.stack.removeWidget(page); page.deleteLater()
         self.pages.clear()
-        self.pages['dashboard'] = DashboardWidget(self)
-        self.pages['accounts'] = AccountsWidget(self)
+        self.pages['dashboard'] = DashboardShell(self)
+        self.pages['accounts'] = AccountingShell(self)
+        self.pages['reports'] = ReportsShell(self)
         
         user_role = UserSession.get_current().get('role') if UserSession.get_current() else 'user'
         if user_role == 'admin':
-            self.pages['users'] = UsersWidget(self)
-            self.pages['audit_log'] = AuditLogWidget(self)
+            self.pages['users'] = UsersShell(self)
+            self.pages['audit_log'] = AuditShell(self)
+        elif user_role == 'auditor':
+            self.pages['audit_log'] = AuditShell(self)
         
-        self.pages['settings'] = SettingsWidget(self)
+        self.pages['settings'] = SettingsShell(self)
         self.pages['accounts'].data_changed.connect(self.pages['dashboard'].refresh_needed.emit)
+        self.pages['accounts'].data_changed.connect(self.pages['reports'].refresh_table)
         self.pages['settings'].rates_changed.connect(self.pages['accounts'].refresh_table)
+        self.pages['settings'].rates_changed.connect(self.pages['reports'].refresh_table)
         for page in self.pages.values():
             self.stack.addWidget(page)
         self.rebuild_sidebar_buttons()
@@ -348,14 +398,21 @@ class MainWindow(QMainWindow):
         self.nav_buttons.clear()
         
         user_role = UserSession.get_current().get('role') if UserSession.get_current() else 'user'
-        pages = [('dashboard','📊',translate('dashboard')), ('accounts','📋',translate('accounts'))]
+        pages = [
+            ('dashboard', 'fa5s.chart-line', translate('dashboard')),
+            ('accounts', 'fa5s.book', translate('accounts')),
+            ('reports', 'fa5s.file-invoice', translate('reports')),
+        ]
         if user_role == 'admin':
-            pages.append(('users','👥',translate('users')))
-            pages.append(('audit_log','📜',translate('audit_log')))
-        pages.append(('settings','⚙️',translate('settings')))
+            pages.append(('users', 'fa5s.users', translate('users')))
+            pages.append(('audit_log', 'fa5s.history', translate('audit_log')))
+        elif user_role == 'auditor':
+            pages.append(('audit_log', 'fa5s.history', translate('audit_log')))
+        pages.append(('settings', 'fa5s.cog', translate('settings')))
         
-        for pid,icon,txt in pages:
-            btn = QPushButton(f"{icon} {txt}")
+        for pid, icon_name, txt in pages:
+            btn = QPushButton(txt)
+            btn.setIcon(qta.icon(icon_name, color=ThemeManager.get('text_secondary')))
             btn.setObjectName("nav_button")
             btn.setFixedHeight(45)
             btn.clicked.connect(lambda checked,p=pid: self.switch_page(p))

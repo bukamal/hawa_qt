@@ -252,7 +252,7 @@ class ReportsWidget(QWidget):
 <tbody>
 """
         for row in data:
-            html += "<td>" + "".join(f"一位{cell}一位" for cell in row) + "</tr>"
+            html += "<tr>" + "".join(f"<td>{cell}</td>" for cell in row) + "</tr>"
         html += f"""
 </tbody>
 </table>

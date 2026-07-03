@@ -45,7 +45,7 @@ class UsersWidget(QWidget):
         self.model = GenericTableModel(data, display_headers, key_fields=['id'], data_keys=data_keys)
         self.table.setModel(self.model)
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        self.table.setColumnHidden(0, True)
+        # id is stored in key_fields, not as a visible column; do not hide username.
         self.table.refresh_style()
 
     def show_context_menu(self, pos):

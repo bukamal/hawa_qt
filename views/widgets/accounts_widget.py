@@ -15,6 +15,8 @@ from views.toast import Toast
 from views.dialogs.company_details_dialog import CompanyDetailsDialog
 from currency import currency
 from auth.session import UserSession
+from services.permission_service import permission_service
+from services.currency_ledger_service import currency_ledger
 from config import get_company_info
 from collections import defaultdict
 from datetime import datetime
@@ -122,9 +124,12 @@ class PrintOptionsDialog(QDialog):
 # ------------------- AccountsWidget -------------------
 class AccountsWidget(QWidget):
     data_changed = pyqtSignal()
+    company_open_requested = pyqtSignal(str)
+    add_record_requested = pyqtSignal()
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, document_mode=False):
         super().__init__(parent)
+        self.document_mode = document_mode
         layout = QVBoxLayout(self)
         layout.setSpacing(12)
         layout.setContentsMargins(12, 12, 12, 12)
@@ -137,8 +142,7 @@ class AccountsWidget(QWidget):
 
         self.add_btn = QPushButton("➕ " + translate('add'))
         self.add_btn.clicked.connect(self.add_record)
-        if not UserSession.is_admin() and UserSession.get_current().get('role') == 'viewer':
-            self.add_btn.setVisible(False)
+        self.add_btn.setVisible(permission_service.can_write_expenses())
         search_layout.addWidget(self.add_btn)
         layout.addLayout(search_layout)
 
@@ -222,14 +226,7 @@ class AccountsWidget(QWidget):
         يستخدم المبلغ الأصلي فقط عندما تكون كل قيود الشركة بنفس العملة وهذه العملة هي نفسها عملة العرض.
         خلاف ذلك تُعرض المجاميع محولة من القيمة الأساسية USD حتى لا تبقى SYP ظاهرة عند اختيار USD.
         """
-        original_currency = AccountsWidget._single_original_currency(records)
-        if original_currency and original_currency == fallback_currency:
-            incoming = sum((AccountsWidget._original_amount(r) for r in records if r.get('type') == 'incoming'), Decimal('0'))
-            outgoing = sum((AccountsWidget._original_amount(r) for r in records if r.get('type') == 'outgoing'), Decimal('0'))
-            return incoming, outgoing, incoming - outgoing, original_currency
-        incoming = currency.convert(incoming_base, 'USD', fallback_currency)
-        outgoing = currency.convert(outgoing_base, 'USD', fallback_currency)
-        return incoming, outgoing, incoming - outgoing, fallback_currency
+        return currency_ledger.company_summary_display_values(records, incoming_base, outgoing_base, fallback_currency)
 
     def _format_payment_status(self, vals):
         waiting = vals.get('waiting_payment', 0)
@@ -241,8 +238,11 @@ class AccountsWidget(QWidget):
         return "—"
 
     def add_record(self):
-        if UserSession.get_current().get('role') == 'viewer':
+        if not permission_service.can_write_expenses():
             QMessageBox.warning(self, translate('warning'), "ليس لديك صلاحية لإضافة قيود")
+            return
+        if self.document_mode:
+            self.add_record_requested.emit()
             return
         dialog = AddEditExpenseDialog(self)
         if dialog.exec():
@@ -257,6 +257,9 @@ class AccountsWidget(QWidget):
         row = index.row()
         company = self.model.get_row(row).get('company')
         if company:
+            if self.document_mode:
+                self.company_open_requested.emit(company)
+                return
             dialog = CompanyDetailsDialog(company, self)
             dialog.exec()
             self.refresh_table()

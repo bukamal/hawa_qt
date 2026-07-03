@@ -1,9 +1,9 @@
 from PyQt5.QtWidgets import QTableView, QMenu, QAction, QFileDialog, QMessageBox, QApplication, QHeaderView, QStyledItemDelegate
 from PyQt5.QtCore import Qt
-from PyQt5.QtGui import QKeySequence, QTextDocument, QTextOption
+from PyQt5.QtGui import QKeySequence, QTextDocument, QTextOption, QFont
 from PyQt5.QtPrintSupport import QPrinter, QPrintPreviewDialog
 from theme_manager import ThemeManager
-import re
+from services.print_service import print_service
 
 class CenterAlignDelegate(QStyledItemDelegate):
     def paint(self, painter, option, index):
@@ -96,7 +96,6 @@ class CustomTableView(QTableView):
         model = self.model()
         if not model:
             return
-        # جمع البيانات
         headers = []
         for col in range(model.columnCount()):
             h = model.headerData(col, Qt.Horizontal, Qt.DisplayRole)
@@ -109,36 +108,8 @@ class CustomTableView(QTableView):
                 val = model.data(idx, Qt.DisplayRole)
                 row_data.append(str(val) if val is not None else '')
             data.append(row_data)
-        
-        # توليد HTML مشابه للـ print_manager
-        html = f'''<!DOCTYPE html>
-<html dir="rtl" lang="ar">
-<head><meta charset="UTF-8"><title>طباعة الجدول</title>
-<style>
-    body {{ font-family: 'Tajawal', 'Segoe UI', 'Tahoma', Arial; direction: rtl; text-align: right; background: white; margin: 1.5cm; }}
-    table {{ width: 100%; border-collapse: collapse; direction: rtl; }}
-    th, td {{ border: 1px solid #ccc; padding: 6px; }}
-    th {{ background: #f1f5f9; text-align: right; }}
-    td {{ text-align: right; }}
-    td.numeric {{ text-align: center; }}
-</style>
-</head>
-<body>
-<table class="data-table" dir="rtl">
-    <thead><tr>
-'''
-        for h in headers:
-            html += f'<th>{h}</th>'
-        html += '</table></thead><tbody>'
-        for row in data:
-            html += '<tr>'
-            for cell in row:
-                is_numeric = re.match(r'^[\d\.,]+$', cell.strip()) is not None
-                klass = ' class="numeric"' if is_numeric else ''
-                html += f'<td{klass}>{cell}</td>'
-            html += '</tr>'
-        html += '</tbody></table></body></html>'
-        
+
+        html = print_service.build_table_report('طباعة الجدول', headers, data)
         doc = QTextDocument()
         doc.setHtml(html)
         doc.setDefaultFont(QFont("Tajawal", 10))
@@ -149,7 +120,7 @@ class CustomTableView(QTableView):
         printer = QPrinter(QPrinter.HighResolution)
         preview = QPrintPreviewDialog(printer, self)
         preview.setLayoutDirection(Qt.RightToLeft)
-        preview.paintRequested.connect(lambda p: doc.print(p))
+        preview.paintRequested.connect(lambda p: doc.print_(p))
         preview.exec()
 
     def refresh_style(self):

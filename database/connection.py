@@ -244,9 +244,57 @@ class DatabaseConnection:
             return
         conn = self.get_connection()
         now = __import__('datetime').datetime.now().isoformat()
+        effective_date = now[:10]
         conn.execute("INSERT OR REPLACE INTO exchange_rates (currency_code, rate_to_usd, updated_at) VALUES (?, ?, ?)",
                      (currency_code, rate_to_usd, now))
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS exchange_rate_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                currency_code TEXT NOT NULL,
+                rate_to_usd REAL NOT NULL,
+                effective_date TEXT NOT NULL,
+                source TEXT DEFAULT 'manual',
+                created_at TEXT NOT NULL
+            )
+        """)
+        conn.execute("""
+            INSERT INTO exchange_rate_history (currency_code, rate_to_usd, effective_date, source, created_at)
+            VALUES (?, ?, ?, 'manual', ?)
+        """, (currency_code, rate_to_usd, effective_date, now))
         conn.commit()
+
+    def get_exchange_rate_history(self, currency_code: str = None, limit: int = 500):
+        if self.mode == "client":
+            if self._rest_client is None or self._rest_client.token is None:
+                return []
+            return self._rest_client.get_exchange_rate_history(currency_code=currency_code, limit=limit)
+        conn = self.get_connection()
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS exchange_rate_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                currency_code TEXT NOT NULL,
+                rate_to_usd REAL NOT NULL,
+                effective_date TEXT NOT NULL,
+                source TEXT DEFAULT 'manual',
+                created_at TEXT NOT NULL
+            )
+        """)
+        if currency_code:
+            rows = conn.execute("""
+                SELECT currency_code, rate_to_usd, effective_date, source, created_at
+                FROM exchange_rate_history
+                WHERE currency_code=?
+                ORDER BY effective_date DESC, id DESC
+                LIMIT ?
+            """, (currency_code, int(limit))).fetchall()
+        else:
+            rows = conn.execute("""
+                SELECT currency_code, rate_to_usd, effective_date, source, created_at
+                FROM exchange_rate_history
+                ORDER BY effective_date DESC, id DESC
+                LIMIT ?
+            """, (int(limit),)).fetchall()
+        return [dict(row) for row in rows]
 
     def vacuum(self):
         if self.mode != "client" and self._local_conn:

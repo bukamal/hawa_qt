@@ -102,4 +102,10 @@ class CurrencyManager:
         db = DatabaseConnection()
         return db.get_all_currencies()
 
+    def get_exchange_rate_history(self, currency_code: str = None, limit: int = 500) -> list:
+        db = DatabaseConnection()
+        if hasattr(db, 'get_exchange_rate_history'):
+            return db.get_exchange_rate_history(currency_code=currency_code, limit=limit)
+        return []
+
 currency = CurrencyManager()

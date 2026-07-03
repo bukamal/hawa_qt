@@ -115,3 +115,14 @@ class RestClient:
 
     def update_exchange_rate(self, currency_code: str, rate_to_usd: float):
         self._request('PUT', f'/api/exchange_rates/{currency_code}', {'rate_to_usd': rate_to_usd})
+
+    def get_exchange_rate_history(self, currency_code: str = None, limit: int = 500):
+        endpoint = '/api/exchange_rate_history'
+        params = []
+        if currency_code:
+            params.append(f'currency_code={currency_code}')
+        if limit:
+            params.append(f'limit={int(limit)}')
+        if params:
+            endpoint += '?' + '&'.join(params)
+        return self._request('GET', endpoint)

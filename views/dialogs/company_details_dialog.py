@@ -17,6 +17,7 @@ import tempfile
 import os
 import re
 from money import base_amount, to_decimal
+from services.currency_ledger_service import currency_ledger
 
 class CompanyDetailsDialog(CenteredDialog):
     def __init__(self, company_name, parent=None):
@@ -68,12 +69,11 @@ class CompanyDetailsDialog(CenteredDialog):
 
     @staticmethod
     def _single_original_currency(records):
-        currencies = {r.get('currency_original') for r in records if r.get('currency_original')}
-        return next(iter(currencies)) if len(currencies) == 1 else None
+        return currency_ledger.single_original_currency(records)
 
     @staticmethod
     def _original_amount(record):
-        return to_decimal(record.get('amount_original', record.get('amount', 0)))
+        return currency_ledger.original_amount(record)
 
     def refresh(self):
         repo = ExpenseRepository()
@@ -112,11 +112,10 @@ class CompanyDetailsDialog(CenteredDialog):
         data = []
         running_balance = Decimal('0')
         for idx, r in enumerate(self.records, start=1):
-            amount_original = r['amount_original']
-            currency_original = r['currency_original']
             # حقلا لنا/له يعرضان دائماً المبلغ الأصلي بعملة القيد وقت الإدخال،
             # ولا يتأثران بعملة العرض العامة.
-            amount_str = f"{to_decimal(amount_original):,.2f} {currency.get_currency_symbol(currency_original)}"
+            amount_str = currency_ledger.format_original_amount(r)
+            historical_rate_str = currency_ledger.historical_rate_label(r)
             
             if r.get('status') == 'waiting_payment':
                 incoming_str = "⏳ بانتظار الدفع"
@@ -140,17 +139,18 @@ class CompanyDetailsDialog(CenteredDialog):
                 'notes': r['notes'] or '',
                 'incoming': incoming_str,
                 'outgoing': outgoing_str,
-                'running': running_str if r.get('status') != 'waiting_payment' else ('موعد التنبيه: ' + (r.get('payment_due_date') or 'غير محدد'))
+                'running': running_str if r.get('status') != 'waiting_payment' else ('موعد التنبيه: ' + (r.get('payment_due_date') or 'غير محدد')),
+                'historical_rate': historical_rate_str
             })
         
-        headers = ['serial', 'date', 'notes', 'incoming', 'outgoing', 'running']
-        display_headers = ['#', translate('date'), translate('notes'), 'لنا', 'له', translate('cumulative')]
-        data_keys = ['serial', 'date', 'notes', 'incoming', 'outgoing', 'running']
+        headers = ['serial', 'date', 'notes', 'incoming', 'outgoing', 'running', 'historical_rate']
+        display_headers = ['#', translate('date'), translate('notes'), 'لنا', 'له', translate('cumulative'), 'سعر القيد']
+        data_keys = ['serial', 'date', 'notes', 'incoming', 'outgoing', 'running', 'historical_rate']
         
         self.model = GenericTableModel(data, display_headers, key_fields=['id'], data_keys=data_keys)
         self.table.setModel(self.model)
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        self.table.setColumnHidden(0, True)
+        # id محفوظ في key_fields وليس عموداً ظاهراً؛ إخفاء العمود 0 كان يخفي الترقيم خطأً.
         self.table.refresh_style()
 
     def add_record(self):
@@ -239,11 +239,10 @@ class CompanyDetailsDialog(CenteredDialog):
         running_balance = Decimal('0')
         table_rows = ""
         for idx, r in enumerate(self.records, start=1):
-            amount_original = r['amount_original']
-            currency_original = r['currency_original']
             # حقلا لنا/له يعرضان دائماً المبلغ الأصلي بعملة القيد وقت الإدخال،
             # ولا يتأثران بعملة العرض العامة.
-            amount_str = f"{to_decimal(amount_original):,.2f} {currency.get_currency_symbol(currency_original)}"
+            amount_str = currency_ledger.format_original_amount(r)
+            historical_rate_str = currency_ledger.historical_rate_label(r)
             notes = self.clean_text(r['notes'] or '—')
             date_display = r['date']
             

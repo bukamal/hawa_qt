@@ -5,14 +5,15 @@ import os
 import subprocess
 import time
 import datetime
-import shutil
 import requests
 import tempfile
 import threading
 from logging_config import setup_logging
-from PyQt5.QtWidgets import QApplication, QMessageBox, QDialog, QVBoxLayout, QDialogButtonBox
-from PyQt5.QtCore import QTimer, QSettings, Qt
+from error_handling import install_exception_hooks
+from PyQt5.QtWidgets import QApplication, QMessageBox
+from PyQt5.QtCore import QTimer, QSettings
 from PyQt5.QtGui import QFont
+from branding import APP_DISPLAY_NAME_AR, APP_DISPLAY_NAME_EN, safe_qicon
 from database import ensure_db
 from auth.activation import check_activation, start_license_checker, stop_license_checker, check_network_activation
 from theme_manager import ThemeManager
@@ -22,6 +23,7 @@ from views.login_dialog import LoginDialog
 from views.main_window import MainWindow
 from auth.session import UserSession
 from utils import enable_auto_select_all
+from ui.auth.startup_helpers import describe_post_login_message
 
 _backup_stop_event = None
 _backup_thread = None
@@ -79,7 +81,7 @@ def wait_for_server(url, timeout=10):
             resp = requests.get(f"{url}/health", timeout=1)
             if resp.status_code == 200 and resp.json().get('status') == 'alive':
                 return True
-        except:
+        except Exception:
             pass
         time.sleep(0.5)
     return False
@@ -93,16 +95,17 @@ def periodic_backup_worker(interval_seconds, folder, db_path):
         backup_path = os.path.join(folder, backup_name)
         try:
             if os.path.exists(db_path):
-                shutil.copy2(db_path, backup_path)
-        except:
-            pass
+                from services.backup_service import backup_service
+                backup_service.create_backup(db_path, backup_path)
+        except Exception:
+            logging.getLogger(__name__).exception("Periodic backup failed")
 
 def start_periodic_backup():
     global _backup_stop_event, _backup_thread
     from database.connection import DatabaseConnection
     db = DatabaseConnection()
     if db.is_remote():
-        logger.info("النسخ الاحتياطي الدوري معطل في وضع العميل")
+        logging.getLogger(__name__).info("النسخ الاحتياطي الدوري معطل في وضع العميل")
         return None
 
     settings = QSettings("Hawaa", "Accounting")
@@ -143,25 +146,12 @@ def test_server_connection(url):
     except:
         return False
 
-def open_network_settings():
-    from views.widgets.settings_widget import SettingsWidget
-    dialog = QDialog()
-    dialog.setWindowTitle("إعدادات الشبكة")
-    dialog.setLayoutDirection(Qt.RightToLeft)
-    dialog.resize(600, 500)
-    layout = QVBoxLayout(dialog)
-    settings_widget = SettingsWidget(dialog)
-    layout.addWidget(settings_widget)
-    button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-    button_box.accepted.connect(dialog.accept)
-    button_box.rejected.connect(dialog.reject)
-    layout.addWidget(button_box)
-    return dialog.exec() == QDialog.Accepted
-
 def main():
-    setup_logging()
+    server_mode = len(sys.argv) > 1 and sys.argv[1] == '--server'
+    setup_logging(context='server' if server_mode else 'app')
+    install_exception_hooks()
     logger = logging.getLogger(__name__)
-    if len(sys.argv) > 1 and sys.argv[1] == '--server':
+    if server_mode:
         logger.info("تشغيل خادم هوى الشام")
         from database.migrations import ensure_db as ensure_db_remote
         ensure_db_remote()
@@ -171,6 +161,13 @@ def main():
         return
 
     app = QApplication(sys.argv)
+    app.setQuitOnLastWindowClosed(True)
+    app.setApplicationName(APP_DISPLAY_NAME_EN)
+    app.setApplicationDisplayName(APP_DISPLAY_NAME_AR)
+    app.setOrganizationName("Hawaa")
+    icon = safe_qicon()
+    if icon is not None:
+        app.setWindowIcon(icon)
     app.setFont(QFont("Tajawal", 10))
     enable_auto_select_all(app)
 
@@ -218,12 +215,24 @@ def main():
     ThemeManager.init_app(app)
 
     splash = ModernSplashScreen()
-    splash.set_progress(10, "جاري تهيئة قاعدة البيانات...")
-    ensure_db()
+    splash.set_progress(8, "تهيئة مسارات التشغيل وملفات السجل...", "بدء التشغيل")
+    QApplication.processEvents()
 
-    splash.set_progress(30, "التحقق من الترخيص...")
-    activated, _ = check_activation()
+    splash.set_progress(18, "تحميل الهوية البصرية والموارد...", "الهوية البصرية")
+    QApplication.processEvents()
+
+    splash.set_progress(30, "فحص قاعدة البيانات وتطبيق التحديثات...", "قاعدة البيانات")
+    try:
+        ensure_db()
+    except Exception as exc:
+        splash.set_error(f"تعذر تهيئة قاعدة البيانات: {exc}")
+        QMessageBox.critical(None, "خطأ في قاعدة البيانات", f"تعذر تهيئة قاعدة البيانات:\n{exc}")
+        sys.exit(1)
+
+    splash.set_progress(44, "فحص حالة الترخيص...", "الترخيص")
+    activated, activation_msg = check_activation()
     if not activated:
+        splash.set_progress(46, activation_msg or "الترخيص غير صالح. يلزم التفعيل.", "التفعيل مطلوب")
         old_splash = splash
         splash.hide()
         dlg = ActivationDialog(old_splash)
@@ -233,27 +242,38 @@ def main():
         old_splash.close()
         old_splash.deleteLater()
         splash = ModernSplashScreen()
-        splash.set_progress(30, "تم التفعيل...")
+        splash.set_progress(52, "تم التفعيل. جارٍ متابعة التشغيل...", "تم التفعيل")
 
     start_license_checker(24, on_license_invalid)
 
-    splash.set_progress(60, "تسجيل الدخول...")
+    splash.set_progress(66, "جاهز لتسجيل الدخول...", "تسجيل الدخول")
     login = LoginDialog(splash)
     splash.hide()
     if login.exec() != LoginDialog.Accepted:
         stop_license_checker()
         sys.exit(0)
 
+    current_user = UserSession.get_current() or {}
+    splash.show()
+    splash.raise_()
+    splash.set_progress(74, describe_post_login_message(current_user.get('username')), "تحميل المستخدم")
+
     if UserSession.force_password_change():
         from views.dialogs.change_password_dialog import ChangePasswordDialog
         from database import UserRepository
+        splash.hide()
         dlg = ChangePasswordDialog()
         if dlg.exec():
             repo = UserRepository()
             repo.set_force_password_change(UserSession.get_current()['id'], False)
+        splash.show()
+        splash.set_progress(80, "تم تحديث كلمة المرور. جارٍ تحميل الصلاحيات...", "تحميل المستخدم")
 
-    splash.set_progress(90, "جاري تحميل الواجهة...")
+    splash.set_progress(86, "تحميل الصلاحيات وتجهيز لوحة التحكم...", "تهيئة المساحة")
+    QApplication.processEvents()
+    splash.set_progress(94, "تجهيز الحسابات والتقارير والإعدادات...", "فتح الواجهة")
     window = MainWindow()
+    splash.set_progress(100, "تم التحميل. جارٍ فتح الواجهة الرئيسية...", "جاهز")
     splash.finish(window)
     window.show()
 
@@ -263,9 +283,16 @@ def main():
 
     if hasattr(window, 'pages') and 'settings' in window.pages:
         settings_widget = window.pages['settings']
-        settings_widget.backup_settings_changed.connect(restart_backup)
+        if hasattr(settings_widget, 'backup_settings_changed'):
+            settings_widget.backup_settings_changed.connect(restart_backup)
 
-    sys.exit(app.exec())
+    exit_code = app.exec()
+    try:
+        stop_license_checker()
+    finally:
+        if _backup_stop_event is not None:
+            _backup_stop_event.set()
+    sys.exit(exit_code)
 
 if __name__ == "__main__":
     main()
