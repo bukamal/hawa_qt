@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import requests
+import datetime as _dt
 
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QLabel, QPushButton,
@@ -16,7 +17,7 @@ from i18n.translator import set_language
 from services.settings_service import settings_service, SUPPORTED_CURRENCIES, BASE_CURRENCY, NETWORK_MODES
 from services.server_service import server_service
 from services.audio_service import audio_service
-from services.mobile_pairing_service import mobile_pairing_service
+from services.mobile_pairing_service import mobile_pairing_service, parse_utc
 
 
 class _SettingsBaseDocument(QWidget):
@@ -311,6 +312,9 @@ class NetworkSettingsDocument(_SettingsBaseDocument):
     def __init__(self, shell=None, parent=None):
         super().__init__(shell, parent)
         self.status_timer = None
+        self.pairing_expiry_timer = None
+        self.current_pairing_result = None
+        self.current_pairing_expires_at = None
         self._setup_ui()
 
     def _setup_ui(self):
@@ -327,6 +331,7 @@ class NetworkSettingsDocument(_SettingsBaseDocument):
         self.mode_combo.currentIndexChanged.connect(self._on_mode_changed)
         self.server_url_edit = QLineEdit()
         self.server_url_edit.setPlaceholderText('http://192.168.1.100:8000')
+        self.server_url_edit.editingFinished.connect(self.refresh_pairing_server_options)
         self.connection_label = QLabel('')
         test_btn = QPushButton('🔍 اختبار الاتصال')
         test_btn.clicked.connect(self.test_connection)
@@ -357,36 +362,69 @@ class NetworkSettingsDocument(_SettingsBaseDocument):
 
         pairing_group = QGroupBox('ربط تطبيق Android عبر QR')
         pairing_layout = QVBoxLayout(pairing_group)
+        pairing_layout.setSpacing(10)
         self.pairing_hint = QLabel(
-            'شغّل الخادم، ثم أنشئ رمز ربط مؤقت. امسح الكود من تطبيق Android أو الصق نص QR هناك. '
+            'اختر عنوان LAN الذي يستطيع الهاتف الوصول إليه، ثم أنشئ رمز ربط مؤقت. '
             'الرمز لا يسجل الدخول ولا يحتوي كلمة مرور، وينتهي خلال دقائق.'
         )
         self.pairing_hint.setWordWrap(True)
         pairing_layout.addWidget(self.pairing_hint)
+
+        pairing_form = QFormLayout()
+        pairing_form.setLabelAlignment(Qt.AlignRight)
+        self.pairing_server_combo = QComboBox()
+        self.pairing_server_combo.setMinimumWidth(420)
+        self.pairing_server_combo.currentIndexChanged.connect(self._on_pairing_server_changed)
+        refresh_ips_btn = QPushButton('🔄 تحديث عناوين الشبكة')
+        refresh_ips_btn.clicked.connect(self.refresh_pairing_server_options)
         self.pairing_url_label = QLabel('عنوان الربط: —')
-        self.pairing_expiry_label = QLabel('ينتهي: —')
-        pairing_layout.addWidget(self.pairing_url_label)
-        pairing_layout.addWidget(self.pairing_expiry_label)
+        self.pairing_url_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        self.pairing_warning_label = QLabel('')
+        self.pairing_warning_label.setWordWrap(True)
+        self.pairing_warning_label.setVisible(False)
+        self.pairing_warning_label.setStyleSheet('color: #92400e; background: #fffbeb; border: 1px solid #f59e0b; border-radius: 8px; padding: 6px;')
+        self.pairing_expiry_label = QLabel('ينتهي خلال: —')
+        self.pairing_expiry_label.setStyleSheet('color: #166534; font-weight: bold;')
+        pairing_form.addRow('عنوان الربط:', self.pairing_server_combo)
+        pairing_form.addRow('', refresh_ips_btn)
+        pairing_form.addRow('', self.pairing_url_label)
+        pairing_form.addRow('', self.pairing_warning_label)
+        pairing_form.addRow('', self.pairing_expiry_label)
+        pairing_layout.addLayout(pairing_form)
+
+        qr_row = QHBoxLayout()
+        qr_row.addStretch(1)
         self.qr_image_label = QLabel('أنشئ رمز ربط لعرض QR')
         self.qr_image_label.setAlignment(Qt.AlignCenter)
-        self.qr_image_label.setMinimumHeight(180)
-        self.qr_image_label.setStyleSheet('background: #ffffff; border: 1px solid #d8e2e0; border-radius: 12px; padding: 8px;')
-        pairing_layout.addWidget(self.qr_image_label)
+        self.qr_image_label.setFixedSize(260, 260)
+        self.qr_image_label.setStyleSheet('background: #ffffff; border: 1px solid #d8e2e0; border-radius: 14px; padding: 12px;')
+        qr_row.addWidget(self.qr_image_label)
+        qr_row.addStretch(1)
+        pairing_layout.addLayout(qr_row)
+
+        self.show_qr_text_check = QCheckBox('إظهار نص الربط المتقدم')
+        self.show_qr_text_check.toggled.connect(self._toggle_qr_text_box)
+        pairing_layout.addWidget(self.show_qr_text_check)
         self.qr_text_box = QPlainTextEdit()
         self.qr_text_box.setReadOnly(True)
-        self.qr_text_box.setMaximumHeight(96)
-        self.qr_text_box.setPlaceholderText('سيظهر هنا نص QR لاستخدامه كخطة بديلة إذا لم يتوفر مسح الكاميرا.')
+        self.qr_text_box.setMaximumHeight(90)
+        self.qr_text_box.setVisible(False)
+        self.qr_text_box.setPlaceholderText('نص الربط يظهر هنا كخطة بديلة إذا لم تتوفر كاميرا QR في Android.')
         pairing_layout.addWidget(self.qr_text_box)
+
         pairing_buttons = QHBoxLayout()
-        generate_pair_btn = QPushButton('📱 إنشاء QR لربط الهاتف')
+        generate_pair_btn = QPushButton('📱 إنشاء رمز ربط للهاتف')
         generate_pair_btn.clicked.connect(self.generate_mobile_pairing_qr)
-        copy_qr_btn = QPushButton('📋 نسخ نص QR')
+        copy_qr_btn = QPushButton('📋 نسخ نص الربط')
         copy_qr_btn.clicked.connect(self.copy_pairing_qr_text)
         copy_url_btn = QPushButton('🔗 نسخ عنوان الخادم')
         copy_url_btn.clicked.connect(self.copy_pairing_server_url)
+        clear_qr_btn = QPushButton('🧹 مسح الرمز')
+        clear_qr_btn.clicked.connect(self.clear_mobile_pairing_qr)
         pairing_buttons.addWidget(generate_pair_btn)
         pairing_buttons.addWidget(copy_qr_btn)
         pairing_buttons.addWidget(copy_url_btn)
+        pairing_buttons.addWidget(clear_qr_btn)
         pairing_buttons.addStretch(1)
         pairing_layout.addLayout(pairing_buttons)
         self.pairing_group = pairing_group
@@ -410,6 +448,10 @@ class NetworkSettingsDocument(_SettingsBaseDocument):
         self.status_timer.timeout.connect(self.update_server_status)
         self.status_timer.start(3000)
 
+        self.pairing_expiry_timer = QTimer(self)
+        self.pairing_expiry_timer.timeout.connect(self.update_pairing_countdown)
+        self.pairing_expiry_timer.start(1000)
+
     def activate(self, **_params):
         self.load()
 
@@ -419,6 +461,7 @@ class NetworkSettingsDocument(_SettingsBaseDocument):
         self.mode_combo.setCurrentIndex(max(idx, 0))
         self.server_url_edit.setText(settings['server_url'])
         self._on_mode_changed()
+        self.refresh_pairing_server_options()
         self.update_network_license_status()
         self.update_server_status()
 
@@ -469,26 +512,107 @@ class NetworkSettingsDocument(_SettingsBaseDocument):
         except Exception as exc:
             self._show_error(exc)
 
+    def _configured_pairing_preferred_url(self):
+        # Prefer the visible server URL when it contains a phone-reachable LAN IP.
+        text = self.server_url_edit.text().strip()
+        if text and text not in {'http://localhost:8000', 'http://127.0.0.1:8000'}:
+            return text
+        return None
+
+    def refresh_pairing_server_options(self):
+        current = self.pairing_server_combo.currentData() if hasattr(self, 'pairing_server_combo') else None
+        options = mobile_pairing_service.server_url_options(
+            port=8000,
+            preferred_url=self._configured_pairing_preferred_url(),
+        )
+        self.pairing_server_combo.blockSignals(True)
+        self.pairing_server_combo.clear()
+        for item in options:
+            label = f"{item.get('label')}: {item.get('url')}"
+            if item.get('recommended'):
+                label = '⭐ ' + label
+            self.pairing_server_combo.addItem(label, item)
+        if current:
+            for idx in range(self.pairing_server_combo.count()):
+                item = self.pairing_server_combo.itemData(idx) or {}
+                if item.get('url') == current.get('url'):
+                    self.pairing_server_combo.setCurrentIndex(idx)
+                    break
+        self.pairing_server_combo.blockSignals(False)
+        self._on_pairing_server_changed()
+
+    def _selected_pairing_option(self):
+        return self.pairing_server_combo.currentData() or {}
+
     def _pairing_server_url(self):
-        # For QR pairing the phone must use a LAN IP, not localhost.
-        return mobile_pairing_service.default_server_url(port=8000)
+        option = self._selected_pairing_option()
+        return option.get('url') or mobile_pairing_service.default_server_url(port=8000)
+
+    def _on_pairing_server_changed(self):
+        url = self._pairing_server_url()
+        option = self._selected_pairing_option()
+        self.pairing_url_label.setText('عنوان الربط المستخدم في QR: ' + (url or '—'))
+        unsafe = bool(option.get('unsafe')) or '127.0.0.1' in url or 'localhost' in url
+        self.pairing_warning_label.setVisible(unsafe)
+        self.pairing_warning_label.setText(
+            '⚠️ هذا العنوان غير مناسب للهاتف. اختر عنوان Wi‑Fi/LAN مثل 192.168.x.x أو تأكد أن الهاتف والكمبيوتر على نفس الشبكة.'
+            if unsafe else ''
+        )
+
+    def _toggle_qr_text_box(self, checked: bool):
+        self.qr_text_box.setVisible(bool(checked))
+
+    def _format_remaining(self, expires_at):
+        if not expires_at:
+            return 'ينتهي خلال: —'
+        remaining = int((expires_at - _dt.datetime.now(_dt.timezone.utc)).total_seconds())
+        if remaining <= 0:
+            return 'انتهت صلاحية رمز الربط'
+        minutes, seconds = divmod(remaining, 60)
+        return f'ينتهي خلال: {minutes:02d}:{seconds:02d}'
+
+    def update_pairing_countdown(self):
+        if not getattr(self, 'pairing_expiry_label', None):
+            return
+        self.pairing_expiry_label.setText(self._format_remaining(self.current_pairing_expires_at))
+        if self.current_pairing_expires_at and _dt.datetime.now(_dt.timezone.utc) >= self.current_pairing_expires_at:
+            self.pairing_expiry_label.setStyleSheet('color: #b91c1c; font-weight: bold;')
+        else:
+            self.pairing_expiry_label.setStyleSheet('color: #166534; font-weight: bold;')
+
+    def clear_mobile_pairing_qr(self):
+        self.current_pairing_result = None
+        self.current_pairing_expires_at = None
+        self.qr_text_box.clear()
+        self.qr_image_label.clear()
+        self.qr_image_label.setText('أنشئ رمز ربط لعرض QR')
+        self.update_pairing_countdown()
 
     def generate_mobile_pairing_qr(self):
         try:
             server_url = self._pairing_server_url()
+            if '127.0.0.1' in server_url or 'localhost' in server_url:
+                QMessageBox.warning(
+                    self,
+                    'عنوان غير صالح للهاتف',
+                    'لا يمكن إنشاء QR بعنوان localhost/127.0.0.1 لأن Android لن يستطيع الوصول إليه. اختر عنوان Wi‑Fi/LAN أولًا.'
+                )
+                return
             result = mobile_pairing_service.create_pairing_payload(server_url=server_url, ttl_minutes=5)
-            self.pairing_url_label.setText('عنوان الربط: ' + result['server_url'])
-            self.pairing_expiry_label.setText('ينتهي: ' + result['expires_at'])
+            self.current_pairing_result = result
+            self.current_pairing_expires_at = parse_utc(result['expires_at'])
+            self.pairing_url_label.setText('عنوان الربط المستخدم في QR: ' + result['server_url'])
+            self.update_pairing_countdown()
             self.qr_text_box.setPlainText(result['qr_text'])
             qr_path = mobile_pairing_service.qr_image_path(result['qr_text'])
             if qr_path:
                 pixmap = QPixmap(qr_path)
                 if not pixmap.isNull():
-                    self.qr_image_label.setPixmap(pixmap.scaled(220, 220, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+                    self.qr_image_label.setPixmap(pixmap.scaled(236, 236, Qt.KeepAspectRatio, Qt.SmoothTransformation))
                 else:
-                    self.qr_image_label.setText('تعذر تحميل صورة QR. استخدم نص QR أدناه.')
+                    self.qr_image_label.setText('تعذر تحميل صورة QR. استخدم نص الربط المتقدم.')
             else:
-                self.qr_image_label.setText('مكتبة qrcode غير متوفرة. استخدم نص QR أدناه.')
+                self.qr_image_label.setText('مكتبة qrcode غير متوفرة. استخدم نص الربط المتقدم.')
             audio_service.play('notify')
         except Exception as exc:
             self._show_error(exc)
@@ -497,9 +621,9 @@ class NetworkSettingsDocument(_SettingsBaseDocument):
         text = self.qr_text_box.toPlainText().strip()
         if text:
             QApplication.clipboard().setText(text)
-            self._show_info('تم نسخ نص QR. الصقه في تطبيق Android إذا لم تستخدم الكاميرا.', sound_id='notify')
+            self._show_info('تم نسخ نص الربط. الصقه في تطبيق Android إذا لم تستخدم الكاميرا.', sound_id='notify')
         else:
-            QMessageBox.information(self, 'لا يوجد QR', 'أنشئ رمز ربط أولًا.')
+            QMessageBox.information(self, 'لا يوجد رمز', 'أنشئ رمز ربط أولًا.')
 
     def copy_pairing_server_url(self):
         url = self._pairing_server_url()
