@@ -13,6 +13,8 @@ from flask_limiter.util import get_remote_address
 from app_config import get_db_path, get_jwt_secret, is_default_jwt_secret
 from logging_config import setup_logging
 from money import quantize_money, decimal_to_storage, rate_to_storage, to_decimal, convert_to_usd
+from services.api_contract import capabilities_payload
+from services.mobile_pairing_service import mobile_pairing_service
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -467,6 +469,40 @@ def get_exchange_rate_history():
             LIMIT ?
         ''', (limit,)).fetchall()
     return jsonify([dict(row) for row in rows])
+
+
+@app.route('/api/capabilities', methods=['GET'])
+@limiter.limit("200 per minute")
+def api_capabilities():
+    server_url = request.args.get('server_url')
+    return jsonify(capabilities_payload(server_url))
+
+
+@app.route('/api/mobile/pairing-token', methods=['POST'])
+@role_required('admin', 'manager')
+@limiter.limit("20 per hour")
+def create_mobile_pairing_token():
+    data = request.get_json(silent=True) or {}
+    server_url = data.get('server_url') or request.host_url.rstrip('/')
+    ttl_minutes = int(data.get('ttl_minutes') or 5)
+    result = mobile_pairing_service.create_pairing_payload(
+        server_url=server_url,
+        ttl_minutes=ttl_minutes,
+        created_by=str(get_jwt_identity()),
+        client_label=data.get('client_label') or 'Android',
+    )
+    log_audit('إنشاء رمز ربط Android', 'mobile_pairing_tokens', 0, f"الخادم: {result['server_url']}", request)
+    return jsonify(result)
+
+
+@app.route('/api/mobile/pair', methods=['POST'])
+@limiter.limit("60 per hour")
+def pair_mobile_client():
+    data = request.get_json(silent=True) or {}
+    token = data.get('pairing_token') or data.get('token')
+    result = mobile_pairing_service.validate_pairing_token(token, consume=True)
+    status = 200 if result.get('ok') else 400
+    return jsonify(result), status
 
 @app.route('/health', methods=['GET'])
 def health():

@@ -9,6 +9,7 @@ from scripts.check_project_readiness import (
     check_packaging_files,
     check_sound_assets,
     check_auth_startup_files,
+    check_mobile_pairing_files,
 )
 
 
@@ -44,4 +45,9 @@ def test_sound_assets_are_present_and_valid(project_root: Path):
 
 def test_branded_auth_startup_files_are_present(project_root: Path):
     issues = check_auth_startup_files(project_root)
+    assert issues == []
+
+
+def test_mobile_pairing_files_and_endpoints_are_present(project_root: Path):
+    issues = check_mobile_pairing_files(project_root)
     assert issues == []

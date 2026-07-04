@@ -30,6 +30,16 @@ class ServerService:
         except Exception as exc:
             return {"alive": False, "status_code": None, "message": str(exc)}
 
+
+    def capabilities(self, url: str = "http://localhost:8000", timeout: int = 2) -> Dict:
+        try:
+            resp = requests.get(f"{url.rstrip('/')}/api/capabilities", timeout=timeout)
+            ok = resp.status_code == 200
+            payload = resp.json() if ok else {}
+            return {"ok": ok, "status_code": resp.status_code, "payload": payload, "message": "ok" if ok else resp.text[:200]}
+        except Exception as exc:
+            return {"ok": False, "status_code": None, "payload": {}, "message": str(exc)}
+
     def start(self) -> Dict:
         if self.is_process_running():
             return {"started": False, "running": True, "message": "الخادم يعمل بالفعل"}

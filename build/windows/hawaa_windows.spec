@@ -21,6 +21,8 @@ hiddenimports = [
     "PyQt5.QtMultimedia",
     "qtawesome",
     "requests",
+    "qrcode",
+    "PIL.Image",
 ]
 
 a = Analysis(

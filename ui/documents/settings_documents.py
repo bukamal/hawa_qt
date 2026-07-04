@@ -6,14 +6,17 @@ import requests
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QLabel, QPushButton,
     QComboBox, QSpinBox, QCheckBox, QLineEdit, QFileDialog, QMessageBox,
-    QTableWidget, QTableWidgetItem, QHeaderView, QGroupBox, QSlider
+    QTableWidget, QTableWidgetItem, QHeaderView, QGroupBox, QSlider,
+    QPlainTextEdit, QApplication
 )
 from PyQt5.QtCore import Qt, pyqtSignal, QTimer
+from PyQt5.QtGui import QPixmap
 
 from i18n.translator import set_language
 from services.settings_service import settings_service, SUPPORTED_CURRENCIES, BASE_CURRENCY, NETWORK_MODES
 from services.server_service import server_service
 from services.audio_service import audio_service
+from services.mobile_pairing_service import mobile_pairing_service
 
 
 class _SettingsBaseDocument(QWidget):
@@ -352,6 +355,43 @@ class NetworkSettingsDocument(_SettingsBaseDocument):
         self.server_group = server_group
         layout.addWidget(server_group)
 
+        pairing_group = QGroupBox('ربط تطبيق Android عبر QR')
+        pairing_layout = QVBoxLayout(pairing_group)
+        self.pairing_hint = QLabel(
+            'شغّل الخادم، ثم أنشئ رمز ربط مؤقت. امسح الكود من تطبيق Android أو الصق نص QR هناك. '
+            'الرمز لا يسجل الدخول ولا يحتوي كلمة مرور، وينتهي خلال دقائق.'
+        )
+        self.pairing_hint.setWordWrap(True)
+        pairing_layout.addWidget(self.pairing_hint)
+        self.pairing_url_label = QLabel('عنوان الربط: —')
+        self.pairing_expiry_label = QLabel('ينتهي: —')
+        pairing_layout.addWidget(self.pairing_url_label)
+        pairing_layout.addWidget(self.pairing_expiry_label)
+        self.qr_image_label = QLabel('أنشئ رمز ربط لعرض QR')
+        self.qr_image_label.setAlignment(Qt.AlignCenter)
+        self.qr_image_label.setMinimumHeight(180)
+        self.qr_image_label.setStyleSheet('background: #ffffff; border: 1px solid #d8e2e0; border-radius: 12px; padding: 8px;')
+        pairing_layout.addWidget(self.qr_image_label)
+        self.qr_text_box = QPlainTextEdit()
+        self.qr_text_box.setReadOnly(True)
+        self.qr_text_box.setMaximumHeight(96)
+        self.qr_text_box.setPlaceholderText('سيظهر هنا نص QR لاستخدامه كخطة بديلة إذا لم يتوفر مسح الكاميرا.')
+        pairing_layout.addWidget(self.qr_text_box)
+        pairing_buttons = QHBoxLayout()
+        generate_pair_btn = QPushButton('📱 إنشاء QR لربط الهاتف')
+        generate_pair_btn.clicked.connect(self.generate_mobile_pairing_qr)
+        copy_qr_btn = QPushButton('📋 نسخ نص QR')
+        copy_qr_btn.clicked.connect(self.copy_pairing_qr_text)
+        copy_url_btn = QPushButton('🔗 نسخ عنوان الخادم')
+        copy_url_btn.clicked.connect(self.copy_pairing_server_url)
+        pairing_buttons.addWidget(generate_pair_btn)
+        pairing_buttons.addWidget(copy_qr_btn)
+        pairing_buttons.addWidget(copy_url_btn)
+        pairing_buttons.addStretch(1)
+        pairing_layout.addLayout(pairing_buttons)
+        self.pairing_group = pairing_group
+        layout.addWidget(pairing_group)
+
         net_license = QGroupBox('تفعيل ميزة الشبكة')
         license_form = QFormLayout(net_license)
         self.network_status_label = QLabel('')
@@ -428,6 +468,43 @@ class NetworkSettingsDocument(_SettingsBaseDocument):
             self._show_info(result['message'], sound_id='server_off')
         except Exception as exc:
             self._show_error(exc)
+
+    def _pairing_server_url(self):
+        # For QR pairing the phone must use a LAN IP, not localhost.
+        return mobile_pairing_service.default_server_url(port=8000)
+
+    def generate_mobile_pairing_qr(self):
+        try:
+            server_url = self._pairing_server_url()
+            result = mobile_pairing_service.create_pairing_payload(server_url=server_url, ttl_minutes=5)
+            self.pairing_url_label.setText('عنوان الربط: ' + result['server_url'])
+            self.pairing_expiry_label.setText('ينتهي: ' + result['expires_at'])
+            self.qr_text_box.setPlainText(result['qr_text'])
+            qr_path = mobile_pairing_service.qr_image_path(result['qr_text'])
+            if qr_path:
+                pixmap = QPixmap(qr_path)
+                if not pixmap.isNull():
+                    self.qr_image_label.setPixmap(pixmap.scaled(220, 220, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+                else:
+                    self.qr_image_label.setText('تعذر تحميل صورة QR. استخدم نص QR أدناه.')
+            else:
+                self.qr_image_label.setText('مكتبة qrcode غير متوفرة. استخدم نص QR أدناه.')
+            audio_service.play('notify')
+        except Exception as exc:
+            self._show_error(exc)
+
+    def copy_pairing_qr_text(self):
+        text = self.qr_text_box.toPlainText().strip()
+        if text:
+            QApplication.clipboard().setText(text)
+            self._show_info('تم نسخ نص QR. الصقه في تطبيق Android إذا لم تستخدم الكاميرا.', sound_id='notify')
+        else:
+            QMessageBox.information(self, 'لا يوجد QR', 'أنشئ رمز ربط أولًا.')
+
+    def copy_pairing_server_url(self):
+        url = self._pairing_server_url()
+        QApplication.clipboard().setText(url)
+        self._show_info('تم نسخ عنوان الخادم: ' + url, sound_id='notify')
 
     def update_network_license_status(self):
         status = settings_service.get_network_license_status()

@@ -84,6 +84,13 @@ AUTH_STARTUP_FILES = (
     "views/splash_screen.py",
 )
 
+
+MOBILE_PAIRING_FILES = (
+    "services/api_contract.py",
+    "services/mobile_pairing_service.py",
+    "tests/test_mobile_pairing_service.py",
+)
+
 BRANDING_FILES = (
     "resources/branding/app.ico",
     "resources/branding/installer.ico",
@@ -219,6 +226,23 @@ def check_packaging_files(root: Path = PROJECT_ROOT) -> List[ReadinessIssue]:
     return issues
 
 
+
+def check_mobile_pairing_files(root: Path = PROJECT_ROOT) -> List[ReadinessIssue]:
+    issues: List[ReadinessIssue] = []
+    for rel in MOBILE_PAIRING_FILES:
+        path = root / rel
+        if not path.exists():
+            issues.append(ReadinessIssue("MOBILE_PAIRING_FILE_MISSING", rel, 0, "Required Windows mobile QR pairing file is missing."))
+        elif path.stat().st_size <= 0:
+            issues.append(ReadinessIssue("MOBILE_PAIRING_FILE_EMPTY", rel, 0, "Required Windows mobile QR pairing file is empty."))
+    flask_path = root / "flask_server.py"
+    if flask_path.exists():
+        text = flask_path.read_text(encoding="utf-8", errors="ignore")
+        for marker in ("/api/capabilities", "/api/mobile/pair", "/api/mobile/pairing-token"):
+            if marker not in text:
+                issues.append(ReadinessIssue("MOBILE_PAIRING_ENDPOINT_MISSING", "flask_server.py", 0, f"Missing endpoint marker: {marker}"))
+    return issues
+
 def check_print_export_files(root: Path = PROJECT_ROOT) -> List[ReadinessIssue]:
     issues: List[ReadinessIssue] = []
     for rel in PRINT_EXPORT_FILES:
@@ -254,6 +278,7 @@ def run_checks(root: Path = PROJECT_ROOT, compile_files: bool = True) -> List[Re
     issues.extend(check_sound_assets(root))
     issues.extend(check_packaging_files(root))
     issues.extend(check_print_export_files(root))
+    issues.extend(check_mobile_pairing_files(root))
     if compile_files:
         issues.extend(collect_compile_errors(root))
     return issues
