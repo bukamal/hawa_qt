@@ -107,6 +107,16 @@ class AppShell(QWidget):
         self.route_requested.emit(route, dict(params))
 
     def open_inline(self, widget, title: str = None):
+        # Any inline content can expose a `closed` signal.  Centralizing the
+        # connection here prevents each document from having to remember to
+        # wire preview/editor close buttons manually.  This fixes cases where
+        # PrintPreviewPanel emitted `closed` but the host panel stayed visible.
+        if hasattr(widget, 'closed'):
+            try:
+                widget.closed.connect(self.close_inline)
+            except Exception:
+                # Close wiring is a UI convenience; never block opening content.
+                pass
         self.inline_panel.set_content(widget, title)
 
     def close_inline(self):

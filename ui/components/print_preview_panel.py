@@ -54,7 +54,7 @@ class PrintPreviewPanel(QWidget):
         self.html_btn = QPushButton('🌐 حفظ HTML')
         self.html_btn.clicked.connect(self.save_html)
         self.close_btn = QPushButton('✖ إغلاق')
-        self.close_btn.clicked.connect(self.closed.emit)
+        self.close_btn.clicked.connect(self.request_close)
 
         can_export_rows = bool(self.headers)
         self.xlsx_btn.setEnabled(can_export_rows)
@@ -76,6 +76,20 @@ class PrintPreviewPanel(QWidget):
         self.preview.setOpenExternalLinks(False)
         self.preview.setHtml(self.html)
         layout.addWidget(self.preview, 1)
+
+
+    def request_close(self):
+        """Request the host InlinePanel to close, with a standalone fallback."""
+        self.closed.emit()
+        # If the panel is shown standalone during debugging, `closed` may have no
+        # receiver.  In that case, close the widget itself so the button still
+        # behaves as users expect.
+        parent = self.parentWidget()
+        while parent is not None:
+            if hasattr(parent, 'close_panel'):
+                return
+            parent = parent.parentWidget()
+        self.close()
 
     def _document(self):
         doc = QTextDocument()
