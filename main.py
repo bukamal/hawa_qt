@@ -197,11 +197,17 @@ def main():
     logger = logging.getLogger(__name__)
     if server_mode:
         logger.info("تشغيل خادم هوى الشام")
-        from database.migrations import ensure_db as ensure_db_remote
-        ensure_db_remote()
-        from waitress import serve
-        from flask_server import app
-        serve(app, host='0.0.0.0', port=8000, threads=4)
+        from services.server_runtime import write_server_pid, clear_server_pid
+        write_server_pid()
+        try:
+            from database.migrations import ensure_db as ensure_db_remote
+            ensure_db_remote()
+            from waitress import serve
+            from flask_server import app
+            serve(app, host='0.0.0.0', port=8000, threads=4)
+        finally:
+            clear_server_pid(os.getpid())
+            close_runtime_resources()
         return
 
     app = QApplication(sys.argv)

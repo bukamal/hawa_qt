@@ -201,6 +201,39 @@ def get_expenses():
     rows = conn.execute('SELECT * FROM expenses ORDER BY id DESC').fetchall()
     return jsonify([dict(row) for row in rows])
 
+
+
+@app.route('/api/expenses/summary', methods=['GET'])
+@jwt_required()
+@limiter.limit("100 per minute")
+def expense_summary():
+    conn = get_db()
+    rows = conn.execute('SELECT company_name, amount, amount_base, type, status FROM expenses').fetchall()
+    total_in = 0.0
+    total_out = 0.0
+    companies = set()
+    waiting = 0
+    for row in rows:
+        companies.add(row['company_name'])
+        if (row['status'] or 'approved') == 'waiting_payment':
+            waiting += 1
+            continue
+        amount_base = row['amount_base'] if 'amount_base' in row.keys() else row['amount']
+        amount_base = float(amount_base or 0)
+        if row['type'] == 'incoming':
+            total_in += amount_base
+        elif row['type'] == 'outgoing':
+            total_out += amount_base
+    return jsonify({
+        'total_incoming': total_in,
+        'total_outgoing': total_out,
+        'net': total_in - total_out,
+        'companies_count': len(companies),
+        'waiting_payment_count': waiting,
+        'base_currency': 'USD',
+    })
+
+
 @app.route('/api/expenses', methods=['POST'])
 @write_required
 @limiter.limit("50 per minute")
@@ -286,6 +319,32 @@ def delete_expense(expense_id):
     log_audit('حذف قيد', 'expenses', expense_id, details, request)
     return jsonify({'status': 'ok'})
 
+
+
+@app.route('/api/payment_reminders', methods=['GET'])
+@jwt_required()
+@limiter.limit("100 per minute")
+def get_payment_reminders():
+    conn = get_db()
+    rows = conn.execute('''
+        SELECT r.*, e.company_name, e.amount_original, e.currency_original, e.type
+        FROM payment_reminders r
+        JOIN expenses e ON e.id = r.expense_id
+        WHERE r.is_done = 0
+        ORDER BY r.reminder_date ASC, r.id DESC
+    ''').fetchall()
+    return jsonify([dict(row) for row in rows])
+
+
+@app.route('/api/payment_reminders/count_waiting', methods=['GET'])
+@jwt_required()
+@limiter.limit("200 per minute")
+def count_waiting_payment():
+    conn = get_db()
+    row = conn.execute("SELECT COUNT(*) AS c FROM expenses WHERE status='waiting_payment'").fetchone()
+    return jsonify({'count': int(row['c'] if row else 0)})
+
+
 @app.route('/api/users', methods=['GET'])
 @admin_required
 @limiter.limit("60 per minute")
@@ -365,6 +424,32 @@ def get_audit_log():
     rows = conn.execute('SELECT * FROM audit_log ORDER BY id DESC LIMIT 2000').fetchall()
     return jsonify([dict(row) for row in rows])
 
+
+
+@app.route('/api/audit_log', methods=['POST'])
+@jwt_required()
+@limiter.limit("120 per minute")
+def add_audit_log_from_client():
+    data = request.get_json(silent=True) or {}
+    user_id = data.get('user_id') or get_jwt_identity()
+    username = data.get('username')
+    if not username:
+        user = get_db().execute('SELECT username FROM users WHERE id = ?', (user_id,)).fetchone()
+        username = user['username'] if user else ''
+    action = str(data.get('action') or '')[:200]
+    table_name = str(data.get('table_name') or '')[:100]
+    record_id = data.get('record_id')
+    details = str(data.get('details') or '')
+    now = datetime.datetime.now().isoformat()
+    conn = get_db()
+    conn.execute('''
+        INSERT INTO audit_log (user_id, username, action, table_name, record_id, details, ip_address, timestamp)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    ''', (user_id, username, action, table_name, record_id, details, request.remote_addr, now))
+    conn.commit()
+    return jsonify({'ok': True, 'status': 'ok'})
+
+
 @app.route('/api/audit_log/old', methods=['DELETE'])
 @admin_required
 @limiter.limit("10 per minute")
@@ -377,6 +462,17 @@ def delete_old_audit_logs():
     conn.commit()
     log_audit('حذف سجلات تدقيق قديمة', 'audit_log', 0, f'أقدم من {days} يوماً', request)
     return jsonify({'status': 'ok'})
+
+
+
+@app.route('/api/settings', methods=['GET'])
+@jwt_required()
+@limiter.limit("100 per minute")
+def get_settings_all():
+    conn = get_db()
+    rows = conn.execute('SELECT key, value FROM settings ORDER BY key').fetchall()
+    return jsonify({row['key']: row['value'] for row in rows})
+
 
 @app.route('/api/settings/<key>', methods=['GET'])
 @jwt_required()
@@ -469,6 +565,26 @@ def get_exchange_rate_history():
             LIMIT ?
         ''', (limit,)).fetchall()
     return jsonify([dict(row) for row in rows])
+
+
+
+@app.route('/api/health', methods=['GET'])
+@limiter.limit("300 per minute")
+def api_health():
+    return jsonify(capabilities_payload(request.host_url.rstrip('/')))
+
+
+@app.route('/api/server_info', methods=['GET'])
+@jwt_required()
+@limiter.limit("120 per minute")
+def server_info():
+    payload = capabilities_payload(request.host_url.rstrip('/'))
+    payload.update({
+        'status': 'alive',
+        'db_path': DB_PATH,
+        'time': datetime.datetime.now().isoformat(),
+    })
+    return jsonify(payload)
 
 
 @app.route('/api/capabilities', methods=['GET'])

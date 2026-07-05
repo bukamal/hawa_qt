@@ -506,9 +506,18 @@ class NetworkSettingsDocument(_SettingsBaseDocument):
 
     def stop_server(self):
         try:
-            result = server_service.stop()
+            url = self.server_url_edit.text().strip() or 'http://localhost:8000'
+            if not url.startswith('http://') and not url.startswith('https://'):
+                url = 'http://' + url
+            # In server mode the visible field may be disabled/empty; the bundled
+            # server always listens on the local 8000 port.
+            if self.mode_combo.currentData() == 'server':
+                url = 'http://localhost:8000'
+            result = server_service.stop(url=url)
             self.update_server_status()
-            self._show_info(result['message'], sound_id='server_off')
+            details = result.get('details')
+            message = result['message'] + (f"\n{details}" if details else '')
+            self._show_info(message, sound_id='server_off' if not result.get('running') else 'warning')
         except Exception as exc:
             self._show_error(exc)
 

@@ -267,3 +267,6 @@ python main.py
 6. لا تستخدم `localhost` أو `127.0.0.1` للهاتف.
 
 - Phase 33: إصلاح زر إغلاق معاينة الطباعة/التقارير داخل Inline Panel من خلال ربط مركزي لإشارة `closed`.
+
+## Phase 36 — API Parity + Real Network Contract
+تم توحيد عقد API بين Windows Server وAndroid. الربط عبر QR لا يُقبل إلا إذا أعلن الخادم دعم `amount_base`، السعر التاريخي، سجل أسعار الصرف، ملخص القيود، تنبيهات الدفع، وإرسال سجل التدقيق من Android. لاختبار الشبكة من هاتف حقيقي افتح أولًا: `http://IP_WINDOWS:8000/api/health` من متصفح الهاتف.
